@@ -1,0 +1,12 @@
+.DS_Store
+
+# Xcode user data and build outputs
+DerivedData/
+build/
+*.xcuserdatad/
+*.xcuserstate
+xcuserdata/
+
+# App bundles and packaged artifacts
+*.app
+*.dmg
