@@ -29,6 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !SettingsManager.shared.showMenuBarIcon {
+            SettingsManager.shared.showMenuBarIcon = true
+        }
+
         windowController.createAndShow()
         windowWatcher.start()
         statusBarController.setVisible(SettingsManager.shared.showMenuBarIcon)
@@ -232,12 +236,19 @@ final class SettingsWindowController {
         )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 458),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "ScreenBlocker 设置"
+        window.title = "ScreenBlocker"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.toolbarStyle = .unified
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
         window.contentView = NSHostingView(rootView: settingsView)
         window.center()
         window.isReleasedWhenClosed = false

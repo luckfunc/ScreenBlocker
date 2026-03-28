@@ -18,6 +18,7 @@ final class WindowWatcher: ObservableObject {
     private var paused = false
     private var feedbackRequested = false
     private var suppressEventsUntil = Date.distantPast
+    private var feedbackCooldownUntil = Date.distantPast
 
     init(blockerController: BlockerWindowController) {
         self.blockerController = blockerController
@@ -154,8 +155,10 @@ final class WindowWatcher: ObservableObject {
         if shouldReportFeedback {
             if didFailToConstrainWindow {
                 blockerController?.showAdjustmentFeedback(.failed)
+                feedbackCooldownUntil = Date().addingTimeInterval(1.0)
             } else if didConstrainWindow {
                 blockerController?.showAdjustmentFeedback(.constrained)
+                feedbackCooldownUntil = Date().addingTimeInterval(1.0)
             }
         }
 
@@ -244,7 +247,8 @@ final class WindowWatcher: ObservableObject {
 
     func handleWindowEvent(_ element: AXUIElement, notification: CFString) {
         guard !paused, isEnabled else { return }
-        if Date() >= suppressEventsUntil {
+        let now = Date()
+        if now >= suppressEventsUntil && now >= feedbackCooldownUntil {
             feedbackRequested = notification == kAXWindowMovedNotification as CFString ||
                 notification == kAXWindowResizedNotification as CFString ||
                 notification == kAXWindowCreatedNotification as CFString

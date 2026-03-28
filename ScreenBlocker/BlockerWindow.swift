@@ -205,6 +205,8 @@ final class BlockerContentView: NSView {
 
     private var palette = BlockerPalette.light
     private var hideFeedbackWorkItem: DispatchWorkItem?
+    private var activeFeedbackStyle: BlockerFeedbackStyle?
+    private var feedbackVisibleUntil = Date.distantPast
 
     var spillHeight: CGFloat = defaultBlockerSpillHeight {
         didSet {
@@ -246,10 +248,24 @@ final class BlockerContentView: NSView {
         hideFeedbackWorkItem?.cancel()
         onFeedbackVisibilityChanged?(true)
 
+        let now = Date()
+        if !feedbackView.isHidden,
+           activeFeedbackStyle == style,
+           now < feedbackVisibleUntil {
+            let hideWorkItem = DispatchWorkItem { [weak self] in
+                self?.animateFeedbackOut()
+            }
+            hideFeedbackWorkItem = hideWorkItem
+            feedbackVisibleUntil = now.addingTimeInterval(1.08)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.08, execute: hideWorkItem)
+            return
+        }
+
         feedbackView.configure(style: style)
         layoutFeedbackView()
         feedbackView.isHidden = false
         feedbackView.alphaValue = 1
+        activeFeedbackStyle = style
 
         animateFeedbackIn()
         animateMembrane(style: style)
@@ -258,6 +274,7 @@ final class BlockerContentView: NSView {
             self?.animateFeedbackOut()
         }
         hideFeedbackWorkItem = hideWorkItem
+        feedbackVisibleUntil = now.addingTimeInterval(1.08)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.08, execute: hideWorkItem)
     }
 
@@ -404,6 +421,7 @@ final class BlockerContentView: NSView {
         CATransaction.setCompletionBlock { [weak self] in
             guard let self else { return }
             self.feedbackView.isHidden = true
+            self.activeFeedbackStyle = nil
             self.onFeedbackVisibilityChanged?(false)
         }
 
