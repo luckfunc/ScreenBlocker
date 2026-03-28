@@ -8,8 +8,7 @@ struct ScreenBlockerApp: App {
     var body: some Scene {
         MenuBarExtra(isInserted: $settings.showMenuBarIcon) {
             MenuBarView(
-                windowController: appDelegate.windowController,
-                windowWatcher: appDelegate.windowWatcher,
+                coordinator: appDelegate.coordinator,
                 settingsWindowController: appDelegate.settingsWindowController
             )
         } label: {
@@ -19,24 +18,18 @@ struct ScreenBlockerApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let windowController = BlockerWindowController()
-    lazy var windowWatcher = WindowWatcher(blockerController: windowController)
-    lazy var settingsWindowController = SettingsWindowController(
-        blockerController: windowController,
-        watcher: windowWatcher
-    )
+    let coordinator = ScreenBlockerCoordinator()
+    lazy var settingsWindowController = SettingsWindowController(coordinator: coordinator)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        windowController.createAndShow()
-        windowWatcher.start()
+        coordinator.start()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.windowController.reposition()
-            self?.windowWatcher.adjustAllWindows()
+            self?.coordinator.handleScreenParametersChanged()
         }
     }
 
@@ -50,12 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 final class SettingsWindowController {
     private var window: NSWindow?
-    private let blockerController: BlockerWindowController
-    private let watcher: WindowWatcher
+    private let coordinator: ScreenBlockerCoordinator
 
-    init(blockerController: BlockerWindowController, watcher: WindowWatcher) {
-        self.blockerController = blockerController
-        self.watcher = watcher
+    init(coordinator: ScreenBlockerCoordinator) {
+        self.coordinator = coordinator
     }
 
     func showSettings() {
@@ -65,10 +56,7 @@ final class SettingsWindowController {
             return
         }
 
-        let settingsView = SettingsView(
-            windowController: blockerController,
-            windowWatcher: watcher
-        )
+        let settingsView = SettingsView(coordinator: coordinator)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
@@ -90,33 +78,32 @@ final class SettingsWindowController {
 // MARK: - Menu Bar
 
 struct MenuBarView: View {
-    @ObservedObject var windowController: BlockerWindowController
-    @ObservedObject var windowWatcher: WindowWatcher
+    @ObservedObject var coordinator: ScreenBlockerCoordinator
     var settingsWindowController: SettingsWindowController
 
     var body: some View {
         VStack {
-            if !windowWatcher.hasAccessibilityPermission {
+            if !coordinator.hasAccessibilityPermission {
                 Button("⚠ 授权辅助功能权限") {
-                    windowWatcher.requestAccessibility()
+                    coordinator.requestAccessibility()
                 }
                 Divider()
             }
 
-            Button(windowController.isVisible ? "隐藏占位窗口" : "显示占位窗口") {
-                windowController.toggle()
+            Button(coordinator.isOverlayVisible ? "隐藏占位窗口" : "显示占位窗口") {
+                coordinator.toggleOverlay()
             }
             .keyboardShortcut("h")
 
             Divider()
 
-            Button(windowWatcher.isEnabled ? "关闭自动调整窗口" : "开启自动调整窗口") {
-                windowWatcher.toggle()
+            Button(coordinator.isWindowAdjustmentEnabled ? "关闭自动调整窗口" : "开启自动调整窗口") {
+                coordinator.toggleWindowAdjustment()
             }
             .keyboardShortcut("a")
 
             Button("立即调整所有窗口") {
-                windowWatcher.adjustAllWindows()
+                coordinator.adjustAllWindows()
             }
             .keyboardShortcut("j")
 

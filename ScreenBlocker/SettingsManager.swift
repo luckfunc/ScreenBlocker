@@ -45,7 +45,7 @@ final class SettingsManager: ObservableObject {
 
     @discardableResult
     func commitBlockRatio(_ ratio: Double) -> Double {
-        let normalizedRatio = min(max(ratio, Self.blockRatioRange.lowerBound), Self.blockRatioRange.upperBound)
+        let normalizedRatio = Self.clampBlockRatio(ratio)
 
         guard abs(blockRatio - normalizedRatio) > 0.0001 else {
             return blockRatio
@@ -54,6 +54,10 @@ final class SettingsManager: ObservableObject {
         blockRatio = normalizedRatio
         UserDefaults.standard.set(normalizedRatio, forKey: Keys.blockRatio)
         return normalizedRatio
+    }
+
+    static func clampBlockRatio(_ ratio: Double) -> Double {
+        min(max(ratio, blockRatioRange.lowerBound), blockRatioRange.upperBound)
     }
 
     private func applyLaunchAtLogin() {

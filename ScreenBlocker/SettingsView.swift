@@ -1,11 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @ObservedObject var settings = SettingsManager.shared
-    @ObservedObject var windowController: BlockerWindowController
-    @ObservedObject var windowWatcher: WindowWatcher
-    @State private var draftBlockRatio = SettingsManager.shared.blockRatio
-    @State private var isAdjustingBlockRatio = false
+    @ObservedObject var coordinator: ScreenBlockerCoordinator
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,11 +18,6 @@ struct SettingsView: View {
         }
         .frame(width: 420, height: 480)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear {
-            draftBlockRatio = settings.blockRatio
-            isAdjustingBlockRatio = false
-            windowController.previewBlockRatio(settings.blockRatio)
-        }
     }
 
     // MARK: - Block Ratio
@@ -42,15 +33,12 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 Slider(
                     value: Binding(
-                        get: { draftBlockRatio },
-                        set: { newValue in
-                            draftBlockRatio = newValue
-                            windowController.previewBlockRatio(newValue)
-                        }
+                        get: { coordinator.displayedBlockRatio },
+                        set: { coordinator.previewBlockRatio($0) }
                     ),
                     in: SettingsManager.blockRatioRange,
                     step: 0.01,
-                    onEditingChanged: handleBlockRatioEditingChanged
+                    onEditingChanged: coordinator.setBlockRatioEditing
                 )
                 Text("80%")
                     .font(.caption)
@@ -59,16 +47,16 @@ struct SettingsView: View {
 
             HStack {
                 Spacer()
-                Text("当前：占屏幕上方 \(Int(draftBlockRatio * 100))%")
+                Text("当前：占屏幕上方 \(Int(coordinator.displayedBlockRatio * 100))%")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(Color(red: 0.85, green: 0.47, blue: 0.34))
                 Spacer()
             }
 
-            if let screen = windowController.portraitScreen {
+            if let screen = coordinator.portraitScreen {
                 HStack {
                     Spacer()
-                    let blockedPx = Int(screen.frame.height * draftBlockRatio)
+                    let blockedPx = Int(screen.frame.height * coordinator.displayedBlockRatio)
                     let usablePx = Int(screen.frame.height) - blockedPx
                     Text("遮挡 \(blockedPx)px · 可用 \(usablePx)px（共 \(Int(screen.frame.width))×\(Int(screen.frame.height))）")
                         .font(.caption)
@@ -79,20 +67,6 @@ struct SettingsView: View {
         }
     }
 
-    private func handleBlockRatioEditingChanged(_ isEditing: Bool) {
-        if isEditing {
-            isAdjustingBlockRatio = true
-            windowWatcher.beginInteractiveUpdate()
-            return
-        }
-
-        let committedRatio = settings.commitBlockRatio(draftBlockRatio)
-        draftBlockRatio = committedRatio
-        windowController.previewBlockRatio(committedRatio)
-        windowWatcher.endInteractiveUpdate(applyFinalAdjustment: isAdjustingBlockRatio)
-        isAdjustingBlockRatio = false
-    }
-
     // MARK: - Toggles
 
     private var togglesSection: some View {
@@ -100,10 +74,22 @@ struct SettingsView: View {
             Label("通用设置", systemImage: "gearshape")
                 .font(.headline)
 
-            Toggle("登录时自动启动", isOn: $settings.launchAtLogin)
-            Toggle("显示菜单栏图标", isOn: $settings.showMenuBarIcon)
+            Toggle(
+                "登录时自动启动",
+                isOn: Binding(
+                    get: { coordinator.settings.launchAtLogin },
+                    set: { coordinator.settings.launchAtLogin = $0 }
+                )
+            )
+            Toggle(
+                "显示菜单栏图标",
+                isOn: Binding(
+                    get: { coordinator.settings.showMenuBarIcon },
+                    set: { coordinator.settings.showMenuBarIcon = $0 }
+                )
+            )
 
-            if !settings.showMenuBarIcon {
+            if !coordinator.settings.showMenuBarIcon {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.yellow)
@@ -124,21 +110,21 @@ struct SettingsView: View {
 
             HStack {
                 Circle()
-                    .fill(windowWatcher.hasAccessibilityPermission ? .green : .red)
+                    .fill(coordinator.hasAccessibilityPermission ? .green : .red)
                     .frame(width: 8, height: 8)
-                Text(windowWatcher.hasAccessibilityPermission ? "辅助功能权限已授权" : "辅助功能权限未授权")
+                Text(coordinator.hasAccessibilityPermission ? "辅助功能权限已授权" : "辅助功能权限未授权")
                     .font(.callout)
-                if !windowWatcher.hasAccessibilityPermission {
-                    Button("去授权") { windowWatcher.requestAccessibility() }
+                if !coordinator.hasAccessibilityPermission {
+                    Button("去授权") { coordinator.requestAccessibility() }
                         .font(.callout)
                 }
             }
 
             HStack {
                 Circle()
-                    .fill(windowController.portraitScreen != nil ? .green : .orange)
+                    .fill(coordinator.portraitScreen != nil ? .green : .orange)
                     .frame(width: 8, height: 8)
-                Text(windowController.portraitScreen != nil ? "已检测到竖屏显示器" : "未检测到竖屏显示器")
+                Text(coordinator.portraitScreen != nil ? "已检测到竖屏显示器" : "未检测到竖屏显示器")
                     .font(.callout)
             }
         }

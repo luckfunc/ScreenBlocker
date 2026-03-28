@@ -1,19 +1,24 @@
 import AppKit
 import ApplicationServices
 
+protocol BlockerLayoutProviding: AnyObject {
+    var targetGeometry: ScreenGeometry? { get }
+    var effectiveBlockRatio: Double { get }
+}
+
 final class WindowWatcher: ObservableObject {
     @Published var isEnabled = true
     @Published var hasAccessibilityPermission = false
 
     private var timer: Timer?
-    private weak var blockerController: BlockerWindowController?
+    weak var layoutProvider: BlockerLayoutProviding?
     private let workQueue = DispatchQueue(label: "com.xdd.ScreenBlocker.watcher", qos: .utility)
     private var isAdjusting = false
     private var pendingAdjustment = false
     private var interactiveUpdateDepth = 0
 
-    init(blockerController: BlockerWindowController) {
-        self.blockerController = blockerController
+    init(layoutProvider: BlockerLayoutProviding? = nil) {
+        self.layoutProvider = layoutProvider
         _ = checkAccessibility()
     }
 
@@ -89,11 +94,8 @@ final class WindowWatcher: ObservableObject {
             return
         }
 
-        guard let usableRect = blockerController?.usableRect,
-              let portraitScreen = blockerController?.portraitScreen else { return }
-
-        let screenFrame = portraitScreen.frame
-        let mainHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
+        guard let layoutProvider, let geometry = layoutProvider.targetGeometry else { return }
+        let blockedRatio = layoutProvider.effectiveBlockRatio
 
         let myPid = ProcessInfo.processInfo.processIdentifier
         let pids = NSWorkspace.shared.runningApplications
@@ -114,7 +116,7 @@ final class WindowWatcher: ObservableObject {
                       let windows = windowsRef as? [AXUIElement] else { continue }
 
                 for window in windows {
-                    self?.adjustWindow(window, screenFrame: screenFrame, usableRect: usableRect, mainScreenHeight: mainHeight)
+                    self?.adjustWindow(window, geometry: geometry, blockedRatio: blockedRatio)
                 }
             }
         }
@@ -127,29 +129,14 @@ final class WindowWatcher: ObservableObject {
         requestAdjustment()
     }
 
-    private func adjustWindow(_ window: AXUIElement, screenFrame: NSRect, usableRect: NSRect, mainScreenHeight: CGFloat) {
-        guard let (position, size) = getWindowFrame(window) else { return }
-
-        let windowRect = NSRect(x: position.x, y: position.y, width: size.width, height: size.height)
-
-        guard windowIsOnScreen(windowRect, screenFrame: screenFrame, mainScreenHeight: mainScreenHeight) else { return }
-
-        let usableTopCG = mainScreenHeight - (usableRect.origin.y + usableRect.height)
-        let usableBottomCG = usableTopCG + usableRect.height
-        let blockedZoneBottom = usableTopCG
-
-        guard position.y < blockedZoneBottom else { return }
-
-        let newY = blockedZoneBottom
-        var newHeight = size.height
-
-        if newY + newHeight > usableBottomCG {
-            newHeight = usableBottomCG - newY
-            if newHeight < 200 { newHeight = 200 }
+    private func adjustWindow(_ window: AXUIElement, geometry: ScreenGeometry, blockedRatio: Double) {
+        guard let windowFrame = getWindowFrame(window),
+              let adjustedFrame = geometry.adjustedWindowFrame(windowFrameAX: windowFrame, blockedRatio: blockedRatio) else {
+            return
         }
 
-        var newPos = CGPoint(x: position.x, y: newY)
-        var newSize = CGSize(width: size.width, height: newHeight)
+        var newPos = adjustedFrame.origin
+        var newSize = adjustedFrame.size
 
         let posValue = AXValueCreate(.cgPoint, &newPos)!
         let sizeValue = AXValueCreate(.cgSize, &newSize)!
@@ -158,7 +145,7 @@ final class WindowWatcher: ObservableObject {
         AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
     }
 
-    private func getWindowFrame(_ window: AXUIElement) -> (CGPoint, CGSize)? {
+    private func getWindowFrame(_ window: AXUIElement) -> CGRect? {
         var posRef: CFTypeRef?
         var sizeRef: CFTypeRef?
 
@@ -173,19 +160,6 @@ final class WindowWatcher: ObservableObject {
         AXValueGetValue(posRef as! AXValue, .cgPoint, &position)
         AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
 
-        return (position, size)
-    }
-
-    private func windowIsOnScreen(_ windowRect: NSRect, screenFrame: NSRect, mainScreenHeight: CGFloat) -> Bool {
-        let screenTopCG = mainScreenHeight - (screenFrame.origin.y + screenFrame.height)
-        let screenCGRect = NSRect(
-            x: screenFrame.origin.x,
-            y: screenTopCG,
-            width: screenFrame.width,
-            height: screenFrame.height
-        )
-
-        return windowRect.midX >= screenCGRect.minX && windowRect.midX <= screenCGRect.maxX &&
-               windowRect.midY >= screenCGRect.minY && windowRect.midY <= screenCGRect.maxY
+        return CGRect(origin: position, size: size)
     }
 }

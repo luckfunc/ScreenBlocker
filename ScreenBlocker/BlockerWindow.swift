@@ -1,34 +1,39 @@
 import AppKit
-import SwiftUI
+
+final class BlockerContentView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
 
 final class BlockerWindowController: ObservableObject {
     private var window: NSWindow?
-    private var currentBlockRatio = SettingsManager.shared.blockRatio
-    @Published var isVisible = true
+    @Published private(set) var isVisible = true
 
     var portraitScreen: NSScreen? {
         NSScreen.screens.first { $0.frame.height > $0.frame.width }
     }
 
-    var usableRect: NSRect? {
+    var targetGeometry: ScreenGeometry? {
         guard let screen = portraitScreen else { return nil }
-        let usableHeight = screen.frame.height * (1.0 - currentBlockRatio)
-        return NSRect(
-            x: screen.frame.origin.x,
-            y: screen.frame.origin.y,
-            width: screen.frame.width,
-            height: usableHeight
-        )
+        return ScreenGeometry(screen: screen)
     }
 
-    func createAndShow() {
-        guard let screen = portraitScreen else {
+    func createAndShow(blockRatio: Double) {
+        guard let geometry = targetGeometry else {
             print("No portrait screen found")
+            isVisible = false
             return
         }
 
         let window = NSWindow(
-            contentRect: windowFrame(for: screen, ratio: currentBlockRatio),
+            contentRect: geometry.blockedRect(for: blockRatio),
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -41,16 +46,16 @@ final class BlockerWindowController: ObservableObject {
         window.ignoresMouseEvents = true
         window.isMovable = false
         window.backgroundColor = .black
-        window.contentView = NSHostingView(rootView: ContentView())
+        window.contentView = BlockerContentView(frame: geometry.blockedRect(for: blockRatio))
 
         window.orderFront(nil)
         self.window = window
         self.isVisible = true
     }
 
-    func toggle() {
+    func toggle(blockRatio: Double) {
         guard let window = window else {
-            createAndShow()
+            createAndShow(blockRatio: blockRatio)
             return
         }
 
@@ -63,23 +68,8 @@ final class BlockerWindowController: ObservableObject {
         }
     }
 
-    func previewBlockRatio(_ ratio: Double) {
-        currentBlockRatio = min(max(ratio, SettingsManager.blockRatioRange.lowerBound), SettingsManager.blockRatioRange.upperBound)
-        reposition()
-    }
-
-    func reposition() {
-        guard let window = window, let screen = portraitScreen else { return }
-        window.setFrame(windowFrame(for: screen, ratio: currentBlockRatio), display: true)
-    }
-
-    private func windowFrame(for screen: NSScreen, ratio: Double) -> NSRect {
-        let blockedHeight = screen.frame.height * ratio
-        return NSRect(
-            x: screen.frame.origin.x,
-            y: screen.frame.origin.y + screen.frame.height - blockedHeight,
-            width: screen.frame.width,
-            height: blockedHeight
-        )
+    func reposition(blockRatio: Double) {
+        guard let window = window, let geometry = targetGeometry else { return }
+        window.setFrame(geometry.blockedRect(for: blockRatio), display: false)
     }
 }
