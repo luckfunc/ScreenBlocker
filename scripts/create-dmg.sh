@@ -31,7 +31,7 @@ fi
 
 INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 SHORT_VERSION="$(
-  /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST" 2>/dev/null || echo "1.0"
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST" 2>/dev/null || echo "0.1.0"
 )"
 BUILD_VERSION="$(
   /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST" 2>/dev/null || echo "1"
