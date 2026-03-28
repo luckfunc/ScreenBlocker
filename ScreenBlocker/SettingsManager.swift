@@ -1,10 +1,10 @@
 import Foundation
 import ServiceManagement
-import Combine
 
 final class SettingsManager: ObservableObject {
 
     static let shared = SettingsManager()
+    static let blockRatioRange: ClosedRange<Double> = 0.1...0.8
 
     private enum Keys {
         static let blockRatio = "blockRatio"
@@ -12,10 +12,7 @@ final class SettingsManager: ObservableObject {
         static let showMenuBarIcon = "showMenuBarIcon"
     }
 
-    static let blockRatioRange = 0.1...0.8
-
-    /// Fraction of the portrait screen blocked from the top (0.1 ~ 0.8)
-    @Published private(set) var blockRatio: Double
+    @Published var blockRatio: Double
 
     @Published var launchAtLogin: Bool {
         didSet {
@@ -30,34 +27,19 @@ final class SettingsManager: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-
         if defaults.object(forKey: Keys.blockRatio) == nil {
             defaults.set(0.333, forKey: Keys.blockRatio)
         }
         if defaults.object(forKey: Keys.showMenuBarIcon) == nil {
             defaults.set(true, forKey: Keys.showMenuBarIcon)
         }
-
         self.blockRatio = defaults.double(forKey: Keys.blockRatio)
         self.launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         self.showMenuBarIcon = defaults.bool(forKey: Keys.showMenuBarIcon)
     }
 
-    @discardableResult
-    func commitBlockRatio(_ ratio: Double) -> Double {
-        let normalizedRatio = Self.clampBlockRatio(ratio)
-
-        guard abs(blockRatio - normalizedRatio) > 0.0001 else {
-            return blockRatio
-        }
-
-        blockRatio = normalizedRatio
-        UserDefaults.standard.set(normalizedRatio, forKey: Keys.blockRatio)
-        return normalizedRatio
-    }
-
-    static func clampBlockRatio(_ ratio: Double) -> Double {
-        min(max(ratio, blockRatioRange.lowerBound), blockRatioRange.upperBound)
+    func saveBlockRatio() {
+        UserDefaults.standard.set(blockRatio, forKey: Keys.blockRatio)
     }
 
     private func applyLaunchAtLogin() {

@@ -8,10 +8,7 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
 
     @Published private(set) var displayedBlockRatio: Double
 
-    private let previewFlushInterval: TimeInterval = 1.0 / 24.0
     private var isEditingBlockRatio = false
-    private var pendingPreviewBlockRatio: Double?
-    private var isPreviewFlushScheduled = false
     private var cancellables = Set<AnyCancellable>()
 
     init(
@@ -26,7 +23,6 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
 
         self.windowWatcher.layoutProvider = self
         bindDependencies()
-        applyDisplayedBlockRatio(settings.blockRatio)
     }
 
     var targetGeometry: ScreenGeometry? {
@@ -34,7 +30,7 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
     }
 
     var effectiveBlockRatio: Double {
-        displayedBlockRatio
+        settings.blockRatio
     }
 
     var isOverlayVisible: Bool {
@@ -54,17 +50,19 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
     }
 
     func start() {
-        windowController.createAndShow(blockRatio: displayedBlockRatio)
+        let committedRatio = settings.blockRatio
+        windowController.createAndShow(blockRatio: committedRatio)
         windowWatcher.start()
     }
 
     func handleScreenParametersChanged() {
-        windowController.reposition(blockRatio: displayedBlockRatio)
+        let committedRatio = settings.blockRatio
+        windowController.reposition(blockRatio: committedRatio)
         windowWatcher.adjustAllWindows()
     }
 
     func toggleOverlay() {
-        windowController.toggle(blockRatio: displayedBlockRatio)
+        windowController.toggle(blockRatio: settings.blockRatio)
     }
 
     func toggleWindowAdjustment() {
@@ -85,9 +83,6 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
         if abs(displayedBlockRatio - normalizedRatio) > 0.0001 {
             displayedBlockRatio = normalizedRatio
         }
-
-        pendingPreviewBlockRatio = normalizedRatio
-        schedulePreviewFlush()
     }
 
     func setBlockRatioEditing(_ isEditing: Bool) {
@@ -107,10 +102,14 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
     private func endBlockRatioEditing() {
         guard isEditingBlockRatio else { return }
 
+        let previousRatio = settings.blockRatio
         let committedRatio = settings.commitBlockRatio(displayedBlockRatio)
-        flushPreviewBlockRatio(committedRatio)
+        displayedBlockRatio = committedRatio
         isEditingBlockRatio = false
-        windowWatcher.endInteractiveUpdate(applyFinalAdjustment: true)
+        windowController.reposition(blockRatio: committedRatio)
+
+        let didChangeRatio = abs(previousRatio - committedRatio) > 0.0001
+        windowWatcher.endInteractiveUpdate(applyFinalAdjustment: didChangeRatio)
     }
 
     private func bindDependencies() {
@@ -130,38 +129,9 @@ final class ScreenBlockerCoordinator: ObservableObject, BlockerLayoutProviding {
             .dropFirst()
             .sink { [weak self] committedRatio in
                 guard let self, !self.isEditingBlockRatio else { return }
-                self.flushPreviewBlockRatio(committedRatio)
+                self.displayedBlockRatio = committedRatio
+                self.windowController.reposition(blockRatio: committedRatio)
             }
             .store(in: &cancellables)
-    }
-
-    private func applyDisplayedBlockRatio(_ ratio: Double) {
-        let normalizedRatio = SettingsManager.clampBlockRatio(ratio)
-
-        if abs(displayedBlockRatio - normalizedRatio) > 0.0001 {
-            displayedBlockRatio = normalizedRatio
-        }
-
-        windowController.reposition(blockRatio: normalizedRatio)
-    }
-
-    private func schedulePreviewFlush() {
-        guard !isPreviewFlushScheduled else { return }
-
-        isPreviewFlushScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + previewFlushInterval) { [weak self] in
-            guard let self else { return }
-            self.isPreviewFlushScheduled = false
-
-            guard let ratio = self.pendingPreviewBlockRatio else { return }
-            self.pendingPreviewBlockRatio = nil
-            self.windowController.reposition(blockRatio: ratio)
-        }
-    }
-
-    private func flushPreviewBlockRatio(_ ratio: Double) {
-        pendingPreviewBlockRatio = nil
-        isPreviewFlushScheduled = false
-        applyDisplayedBlockRatio(ratio)
     }
 }
