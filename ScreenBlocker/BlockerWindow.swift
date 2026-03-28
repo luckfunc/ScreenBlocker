@@ -1,5 +1,30 @@
 import AppKit
 
+private let blockerWindowLevel = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
+
+enum BlockerFeedbackStyle {
+    case constrained
+    case failed
+
+    var symbolName: String {
+        switch self {
+        case .constrained:
+            return "arrow.down.forward.and.arrow.up.backward"
+        case .failed:
+            return "hand.raised.slash"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .constrained:
+            return "已限制到下半区"
+        case .failed:
+            return "这个窗口无法自动调整"
+        }
+    }
+}
+
 private struct BlockerPalette {
     let backgroundTop: NSColor
     let backgroundBottom: NSColor
@@ -36,6 +61,125 @@ private struct BlockerPalette {
     )
 }
 
+final class BlockerFeedbackView: NSView {
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let backgroundLayer = CAShapeLayer()
+    private let borderLayer = CAShapeLayer()
+
+    private var style: BlockerFeedbackStyle = .constrained
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        layer?.addSublayer(backgroundLayer)
+        layer?.addSublayer(borderLayer)
+        layer?.shadowOpacity = 0.18
+        layer?.shadowRadius = 14
+        layer?.shadowOffset = CGSize(width: 0, height: 6)
+
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        iconView.imageScaling = .scaleProportionallyDown
+        addSubview(iconView)
+
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.alignment = .center
+        titleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(titleLabel)
+
+        alphaValue = 0
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let labelSize = titleLabel.fittingSize
+        return NSSize(width: labelSize.width + 42, height: 30)
+    }
+
+    override func layout() {
+        super.layout()
+
+        let capsulePath = CGPath(
+            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+            cornerWidth: bounds.height / 2,
+            cornerHeight: bounds.height / 2,
+            transform: nil
+        )
+        backgroundLayer.frame = bounds
+        backgroundLayer.path = capsulePath
+        borderLayer.frame = bounds
+        borderLayer.path = capsulePath
+
+        let iconSize: CGFloat = 14
+        iconView.frame = NSRect(x: 12, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
+        let labelX = iconView.frame.maxX + 8
+        titleLabel.frame = NSRect(
+            x: labelX,
+            y: (bounds.height - 16) / 2,
+            width: max(0, bounds.width - labelX - 14),
+            height: 16
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    func configure(style: BlockerFeedbackStyle) {
+        self.style = style
+        titleLabel.stringValue = style.message
+        iconView.image = NSImage(systemSymbolName: style.symbolName, accessibilityDescription: style.message)
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.shadowColor = (isDark
+            ? NSColor(calibratedWhite: 0.0, alpha: 0.55)
+            : NSColor(calibratedWhite: 0.0, alpha: 0.22)
+        ).cgColor
+
+        switch style {
+        case .constrained:
+            titleLabel.textColor = NSColor(calibratedWhite: 1.0, alpha: isDark ? 0.92 : 0.96)
+            iconView.contentTintColor = titleLabel.textColor
+            backgroundLayer.fillColor = (isDark
+                ? NSColor(calibratedWhite: 1.0, alpha: 0.10)
+                : NSColor(calibratedRed: 0.25, green: 0.30, blue: 0.34, alpha: 0.84)
+            ).cgColor
+            borderLayer.strokeColor = (isDark
+                ? NSColor(calibratedWhite: 1.0, alpha: 0.16)
+                : NSColor(calibratedRed: 0.19, green: 0.24, blue: 0.28, alpha: 0.94)
+            ).cgColor
+        case .failed:
+            titleLabel.textColor = isDark
+                ? NSColor(calibratedRed: 0.99, green: 0.81, blue: 0.68, alpha: 0.96)
+                : NSColor(calibratedWhite: 1.0, alpha: 0.96)
+            iconView.contentTintColor = titleLabel.textColor
+            backgroundLayer.fillColor = (isDark
+                ? NSColor(calibratedRed: 0.63, green: 0.39, blue: 0.16, alpha: 0.18)
+                : NSColor(calibratedRed: 0.73, green: 0.43, blue: 0.16, alpha: 0.88)
+            ).cgColor
+            borderLayer.strokeColor = (isDark
+                ? NSColor(calibratedRed: 0.92, green: 0.63, blue: 0.38, alpha: 0.32)
+                : NSColor(calibratedRed: 0.56, green: 0.30, blue: 0.09, alpha: 0.94)
+            ).cgColor
+        }
+    }
+}
+
 final class BlockerContentView: NSView {
     private let backgroundLayer = CAGradientLayer()
     private let glowLayer = CAShapeLayer()
@@ -43,14 +187,17 @@ final class BlockerContentView: NSView {
     private let cloudLayers = (0..<3).map { _ in CAShapeLayer() }
     private let ridgeLayers = (0..<3).map { _ in CAShapeLayer() }
     private let dividerLayer = CAShapeLayer()
+    private let feedbackView = BlockerFeedbackView(frame: .zero)
 
     private var palette = BlockerPalette.dark
     private var sceneSize = CGSize.zero
+    private var hideFeedbackWorkItem: DispatchWorkItem?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         configureSceneLayers()
+        addSubview(feedbackView)
 
         updateAppearance()
     }
@@ -62,6 +209,7 @@ final class BlockerContentView: NSView {
     override func layout() {
         super.layout()
         layoutScene()
+        layoutFeedbackView()
         if sceneSize != bounds.size {
             sceneSize = bounds.size
             restartAnimations()
@@ -188,6 +336,35 @@ final class BlockerContentView: NSView {
         dividerLayer.path = dividerPath
     }
 
+    func showFeedback(_ style: BlockerFeedbackStyle) {
+        hideFeedbackWorkItem?.cancel()
+
+        feedbackView.configure(style: style)
+        layoutFeedbackView()
+        feedbackView.isHidden = false
+        feedbackView.alphaValue = 0
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            feedbackView.animator().alphaValue = 1
+        }
+
+        let hideWorkItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                self.feedbackView.animator().alphaValue = 0
+            }, completionHandler: {
+                self.feedbackView.isHidden = true
+            })
+        }
+
+        hideFeedbackWorkItem = hideWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: hideWorkItem)
+    }
+
     private func restartAnimations() {
         guard !bounds.isEmpty else { return }
 
@@ -290,10 +467,22 @@ final class BlockerContentView: NSView {
         ))
         return path
     }
+
+    private func layoutFeedbackView() {
+        let fittingSize = feedbackView.fittingSize
+        let width = min(bounds.width - 28, max(164, fittingSize.width))
+        feedbackView.frame = NSRect(
+            x: (bounds.width - width) / 2,
+            y: max(10, bounds.height * 0.08),
+            width: width,
+            height: 30
+        )
+    }
 }
 
 final class BlockerWindowController: ObservableObject {
     private var window: NSWindow?
+    private weak var blockerContentView: BlockerContentView?
     @Published var isVisible = true
 
     var portraitScreen: NSScreen? {
@@ -320,7 +509,7 @@ final class BlockerWindowController: ObservableObject {
             defer: false
         )
 
-        window.level = .screenSaver
+        window.level = blockerWindowLevel
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.isOpaque = true
         window.hasShadow = false
@@ -329,10 +518,12 @@ final class BlockerWindowController: ObservableObject {
         window.hidesOnDeactivate = false
         window.canHide = false
         window.backgroundColor = .windowBackgroundColor
-        window.contentView = makeBlockerView()
+        let blockerContentView = makeBlockerView()
+        window.contentView = blockerContentView
 
         window.orderFrontRegardless()
         self.window = window
+        self.blockerContentView = blockerContentView
         self.isVisible = true
     }
 
@@ -359,7 +550,11 @@ final class BlockerWindowController: ObservableObject {
         }
     }
 
-    private func makeBlockerView() -> NSView {
+    func showAdjustmentFeedback(_ style: BlockerFeedbackStyle) {
+        blockerContentView?.showFeedback(style)
+    }
+
+    private func makeBlockerView() -> BlockerContentView {
         BlockerContentView(frame: .zero)
     }
 

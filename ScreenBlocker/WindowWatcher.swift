@@ -16,6 +16,8 @@ final class WindowWatcher: ObservableObject {
     private var isAdjustingAllWindows = false
     private var needsAdjustmentAfterResume = false
     private var paused = false
+    private var feedbackRequested = false
+    private var suppressEventsUntil = Date.distantPast
 
     init(blockerController: BlockerWindowController) {
         self.blockerController = blockerController
@@ -103,6 +105,9 @@ final class WindowWatcher: ObservableObject {
               let portraitScreen = blockerController?.portraitScreen else { return }
         guard !isAdjustingAllWindows else { return }
 
+        let shouldReportFeedback = feedbackRequested
+        feedbackRequested = false
+
         isAdjustingAllWindows = true
         defer { isAdjustingAllWindows = false }
 
@@ -110,6 +115,8 @@ final class WindowWatcher: ObservableObject {
         let axCoordinateMaxY = Self.axCoordinateMaxY(fallback: screenFrame.maxY)
         let myPid = ProcessInfo.processInfo.processIdentifier
         var needsFollowUpAdjustment = false
+        var didConstrainWindow = false
+        var didFailToConstrainWindow = false
 
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.processIdentifier != myPid {
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
@@ -126,9 +133,29 @@ final class WindowWatcher: ObservableObject {
                     usableRect: usableRect,
                     axCoordinateMaxY: axCoordinateMaxY
                 )
-                if outcome == .needsFollowUp {
+                switch outcome {
+                case .unchanged:
+                    break
+                case .adjusted:
+                    didConstrainWindow = true
+                case .needsFollowUp:
                     needsFollowUpAdjustment = true
+                    didConstrainWindow = true
+                case .failed:
+                    didFailToConstrainWindow = true
                 }
+            }
+        }
+
+        if didConstrainWindow || didFailToConstrainWindow {
+            suppressEventsUntil = Date().addingTimeInterval(0.45)
+        }
+
+        if shouldReportFeedback {
+            if didFailToConstrainWindow {
+                blockerController?.showAdjustmentFeedback(.failed)
+            } else if didConstrainWindow {
+                blockerController?.showAdjustmentFeedback(.constrained)
             }
         }
 
@@ -215,9 +242,22 @@ final class WindowWatcher: ObservableObject {
 
     // MARK: - Handle AX notification
 
-    func handleWindowEvent(_ element: AXUIElement) {
+    func handleWindowEvent(_ element: AXUIElement, notification: CFString) {
         guard !paused, isEnabled else { return }
-        scheduleAdjustAllWindows(after: 0.15)
+        if Date() >= suppressEventsUntil {
+            feedbackRequested = notification == kAXWindowMovedNotification as CFString ||
+                notification == kAXWindowResizedNotification as CFString ||
+                notification == kAXWindowCreatedNotification as CFString
+        }
+
+        let delay: TimeInterval
+        if notification == kAXWindowCreatedNotification as CFString {
+            delay = 0.2
+        } else {
+            delay = 0.45
+        }
+
+        scheduleAdjustAllWindows(after: delay)
     }
 
     private func scheduleAdjustAllWindows(after delay: TimeInterval) {
@@ -245,6 +285,7 @@ final class WindowWatcher: ObservableObject {
         case unchanged
         case adjusted
         case needsFollowUp
+        case failed
     }
 
     private static func adjustWindowIfNeeded(
@@ -277,21 +318,16 @@ final class WindowWatcher: ObservableObject {
 
         if isWindowFullScreen(window) {
             let result = AXUIElementSetAttributeValue(window, axFullScreenAttribute, kCFBooleanFalse)
-            return result == .success ? .needsFollowUp : .unchanged
+            return result == .success ? .needsFollowUp : .failed
         }
 
         let usableCGRect = axRect(for: usableRect, axCoordinateMaxY: axCoordinateMaxY)
         let usableTopCG = usableCGRect.minY
         let usableBottomCG = usableCGRect.maxY
-        let topGap = position.y - usableTopCG
-        let shouldSnapToTopEdge =
-            topGap > 48 &&
-            (
-                size.width >= screenFrame.width * 0.72 ||
-                size.height >= usableRect.height * 0.55
-            )
+        let overlapsBlockedZone = position.y < usableTopCG
+        let exceedsBottomBoundary = position.y + size.height > usableBottomCG
 
-        guard shouldSnapToTopEdge || position.y < usableTopCG || position.y + size.height > usableBottomCG else {
+        guard overlapsBlockedZone || exceedsBottomBoundary else {
             return .unchanged
         }
 
@@ -307,7 +343,7 @@ final class WindowWatcher: ObservableObject {
         let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &newPos)!)
         let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &newSize)!)
 
-        return (positionResult == .success || sizeResult == .success) ? .adjusted : .unchanged
+        return (positionResult == .success || sizeResult == .success) ? .adjusted : .failed
     }
 
     private static func isWindowFullScreen(_ window: AXUIElement) -> Bool {
@@ -339,5 +375,5 @@ final class WindowWatcher: ObservableObject {
 private func axCallback(_ observer: AXObserver, _ element: AXUIElement, _ notification: CFString, _ refcon: UnsafeMutableRawPointer?) {
     guard let refcon = refcon else { return }
     let watcher = Unmanaged<WindowWatcher>.fromOpaque(refcon).takeUnretainedValue()
-    watcher.handleWindowEvent(element)
+    watcher.handleWindowEvent(element, notification: notification)
 }
