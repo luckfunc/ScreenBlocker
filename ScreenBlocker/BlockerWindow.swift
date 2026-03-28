@@ -1,6 +1,8 @@
 import AppKit
 
 private let blockerWindowLevel = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
+private let feedbackWindowLevel = NSWindow.Level.floating
+private let defaultBlockerSpillHeight: CGFloat = 40
 
 enum BlockerFeedbackStyle {
     case constrained
@@ -23,49 +25,74 @@ enum BlockerFeedbackStyle {
             return "这个窗口无法自动调整"
         }
     }
+
+    func colors(isDark: Bool) -> (text: NSColor, fill: NSColor, border: NSColor, accent: NSColor, jelly: NSColor) {
+        switch self {
+        case .constrained:
+            let accent = NSColor.controlAccentColor
+            return (
+                text: isDark
+                    ? NSColor(calibratedWhite: 1.0, alpha: 0.96)
+                    : NSColor(calibratedWhite: 0.11, alpha: 0.96),
+                fill: isDark
+                    ? NSColor(calibratedWhite: 0.15, alpha: 0.82)
+                    : NSColor(calibratedWhite: 1.0, alpha: 0.84),
+                border: isDark
+                    ? NSColor(calibratedWhite: 1.0, alpha: 0.10)
+                    : NSColor(calibratedWhite: 0.0, alpha: 0.08),
+                accent: accent.withAlphaComponent(isDark ? 0.96 : 0.92),
+                jelly: accent.withAlphaComponent(isDark ? 0.13 : 0.10)
+            )
+        case .failed:
+            let accent = NSColor.systemOrange
+            return (
+                text: isDark
+                    ? NSColor(calibratedWhite: 1.0, alpha: 0.96)
+                    : NSColor(calibratedWhite: 0.11, alpha: 0.96),
+                fill: isDark
+                    ? NSColor(calibratedWhite: 0.15, alpha: 0.84)
+                    : NSColor(calibratedWhite: 1.0, alpha: 0.86),
+                border: isDark
+                    ? accent.withAlphaComponent(0.22)
+                    : accent.withAlphaComponent(0.18),
+                accent: accent.withAlphaComponent(isDark ? 0.96 : 0.92),
+                jelly: accent.withAlphaComponent(isDark ? 0.14 : 0.11)
+            )
+        }
+    }
 }
 
 private struct BlockerPalette {
-    let backgroundTop: NSColor
-    let backgroundBottom: NSColor
-    let celestial: NSColor
-    let celestialGlow: NSColor
-    let cloud: NSColor
-    let ridgeFar: NSColor
-    let ridgeMid: NSColor
-    let ridgeFront: NSColor
-    let divider: NSColor
-
-    static let dark = BlockerPalette(
-        backgroundTop: NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.15, alpha: 1),
-        backgroundBottom: NSColor(calibratedRed: 0.03, green: 0.04, blue: 0.06, alpha: 1),
-        celestial: NSColor(calibratedRed: 0.95, green: 0.75, blue: 0.48, alpha: 1),
-        celestialGlow: NSColor(calibratedRed: 0.96, green: 0.70, blue: 0.41, alpha: 0.22),
-        cloud: NSColor(calibratedRed: 0.79, green: 0.84, blue: 0.89, alpha: 0.14),
-        ridgeFar: NSColor(calibratedRed: 0.18, green: 0.22, blue: 0.29, alpha: 1),
-        ridgeMid: NSColor(calibratedRed: 0.12, green: 0.16, blue: 0.22, alpha: 1),
-        ridgeFront: NSColor(calibratedRed: 0.07, green: 0.10, blue: 0.15, alpha: 1),
-        divider: NSColor(calibratedWhite: 1, alpha: 0.08)
-    )
+    let mistTop: NSColor
+    let mistBottom: NSColor
+    let idleMembrane: NSColor
+    let idleEdge: NSColor
 
     static let light = BlockerPalette(
-        backgroundTop: NSColor(calibratedRed: 0.98, green: 0.97, blue: 0.94, alpha: 1),
-        backgroundBottom: NSColor(calibratedRed: 0.93, green: 0.95, blue: 0.96, alpha: 1),
-        celestial: NSColor(calibratedRed: 0.95, green: 0.70, blue: 0.36, alpha: 1),
-        celestialGlow: NSColor(calibratedRed: 0.97, green: 0.76, blue: 0.47, alpha: 0.24),
-        cloud: NSColor(calibratedRed: 1.00, green: 1.00, blue: 1.00, alpha: 0.42),
-        ridgeFar: NSColor(calibratedRed: 0.84, green: 0.85, blue: 0.81, alpha: 1),
-        ridgeMid: NSColor(calibratedRed: 0.73, green: 0.77, blue: 0.76, alpha: 1),
-        ridgeFront: NSColor(calibratedRed: 0.58, green: 0.63, blue: 0.65, alpha: 1),
-        divider: NSColor(calibratedWhite: 0, alpha: 0.08)
+        mistTop: NSColor(calibratedWhite: 1.0, alpha: 0.028),
+        mistBottom: NSColor(calibratedWhite: 1.0, alpha: 0.0),
+        idleMembrane: NSColor(calibratedWhite: 1.0, alpha: 0.018),
+        idleEdge: NSColor(calibratedWhite: 0.0, alpha: 0.10)
     )
+
+    static let dark = BlockerPalette(
+        mistTop: NSColor(calibratedWhite: 1.0, alpha: 0.018),
+        mistBottom: NSColor(calibratedWhite: 1.0, alpha: 0.0),
+        idleMembrane: NSColor(calibratedWhite: 1.0, alpha: 0.012),
+        idleEdge: NSColor(calibratedWhite: 1.0, alpha: 0.10)
+    )
+
+    static func current(for appearance: NSAppearance) -> BlockerPalette {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
 }
 
 final class BlockerFeedbackView: NSView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let backgroundLayer = CAShapeLayer()
+    private let fillLayer = CAShapeLayer()
     private let borderLayer = CAShapeLayer()
+    private let glossLayer = CAGradientLayer()
 
     private var style: BlockerFeedbackStyle = .constrained
 
@@ -73,17 +100,18 @@ final class BlockerFeedbackView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
 
-        layer?.addSublayer(backgroundLayer)
+        layer?.addSublayer(fillLayer)
+        layer?.addSublayer(glossLayer)
         layer?.addSublayer(borderLayer)
-        layer?.shadowOpacity = 0.18
-        layer?.shadowRadius = 14
-        layer?.shadowOffset = CGSize(width: 0, height: 6)
+        layer?.shadowOpacity = 0.26
+        layer?.shadowRadius = 18
+        layer?.shadowOffset = CGSize(width: 0, height: 10)
 
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         iconView.imageScaling = .scaleProportionallyDown
         addSubview(iconView)
 
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.alignment = .center
         titleLabel.lineBreakMode = .byTruncatingTail
         addSubview(titleLabel)
@@ -96,43 +124,9 @@ final class BlockerFeedbackView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override var isFlipped: Bool {
-        true
-    }
-
     override var intrinsicContentSize: NSSize {
         let labelSize = titleLabel.fittingSize
-        return NSSize(width: labelSize.width + 42, height: 30)
-    }
-
-    override func layout() {
-        super.layout()
-
-        let capsulePath = CGPath(
-            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-            cornerWidth: bounds.height / 2,
-            cornerHeight: bounds.height / 2,
-            transform: nil
-        )
-        backgroundLayer.frame = bounds
-        backgroundLayer.path = capsulePath
-        borderLayer.frame = bounds
-        borderLayer.path = capsulePath
-
-        let iconSize: CGFloat = 14
-        iconView.frame = NSRect(x: 12, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
-        let labelX = iconView.frame.maxX + 8
-        titleLabel.frame = NSRect(
-            x: labelX,
-            y: (bounds.height - 16) / 2,
-            width: max(0, bounds.width - labelX - 14),
-            height: 16
-        )
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        updateAppearance()
+        return NSSize(width: labelSize.width + 52, height: 36)
     }
 
     func configure(style: BlockerFeedbackStyle) {
@@ -144,61 +138,87 @@ final class BlockerFeedbackView: NSView {
         updateAppearance()
     }
 
+    override func layout() {
+        super.layout()
+
+        let capsulePath = CGPath(
+            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+            cornerWidth: bounds.height / 2,
+            cornerHeight: bounds.height / 2,
+            transform: nil
+        )
+
+        fillLayer.frame = bounds
+        fillLayer.path = capsulePath
+
+        glossLayer.frame = bounds
+        let glossMask = CAShapeLayer()
+        glossMask.frame = bounds
+        glossMask.path = capsulePath
+        glossLayer.mask = glossMask
+
+        borderLayer.frame = bounds
+        borderLayer.path = capsulePath
+        borderLayer.lineWidth = 1
+        borderLayer.fillColor = nil
+
+        let iconSize: CGFloat = 14
+        iconView.frame = NSRect(x: 14, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
+        let labelX = iconView.frame.maxX + 8
+        titleLabel.frame = NSRect(
+            x: labelX,
+            y: (bounds.height - 16) / 2,
+            width: max(0, bounds.width - labelX - 16),
+            height: 16
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
     private func updateAppearance() {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        layer?.shadowColor = (isDark
-            ? NSColor(calibratedWhite: 0.0, alpha: 0.55)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.22)
-        ).cgColor
+        let colors = style.colors(isDark: isDark)
 
-        switch style {
-        case .constrained:
-            titleLabel.textColor = NSColor(calibratedWhite: 1.0, alpha: isDark ? 0.92 : 0.96)
-            iconView.contentTintColor = titleLabel.textColor
-            backgroundLayer.fillColor = (isDark
-                ? NSColor(calibratedWhite: 1.0, alpha: 0.10)
-                : NSColor(calibratedRed: 0.25, green: 0.30, blue: 0.34, alpha: 0.84)
-            ).cgColor
-            borderLayer.strokeColor = (isDark
-                ? NSColor(calibratedWhite: 1.0, alpha: 0.16)
-                : NSColor(calibratedRed: 0.19, green: 0.24, blue: 0.28, alpha: 0.94)
-            ).cgColor
-        case .failed:
-            titleLabel.textColor = isDark
-                ? NSColor(calibratedRed: 0.99, green: 0.81, blue: 0.68, alpha: 0.96)
-                : NSColor(calibratedWhite: 1.0, alpha: 0.96)
-            iconView.contentTintColor = titleLabel.textColor
-            backgroundLayer.fillColor = (isDark
-                ? NSColor(calibratedRed: 0.63, green: 0.39, blue: 0.16, alpha: 0.18)
-                : NSColor(calibratedRed: 0.73, green: 0.43, blue: 0.16, alpha: 0.88)
-            ).cgColor
-            borderLayer.strokeColor = (isDark
-                ? NSColor(calibratedRed: 0.92, green: 0.63, blue: 0.38, alpha: 0.32)
-                : NSColor(calibratedRed: 0.56, green: 0.30, blue: 0.09, alpha: 0.94)
-            ).cgColor
-        }
+        titleLabel.textColor = colors.text
+        iconView.contentTintColor = colors.accent
+        fillLayer.fillColor = colors.fill.cgColor
+        borderLayer.strokeColor = colors.border.cgColor
+        glossLayer.colors = [
+            NSColor(calibratedWhite: 1.0, alpha: isDark ? 0.12 : 0.20).cgColor,
+            NSColor(calibratedWhite: 1.0, alpha: 0.02).cgColor
+        ]
+        glossLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        glossLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        layer?.shadowColor = NSColor(calibratedWhite: 0.0, alpha: isDark ? 0.42 : 0.16).cgColor
     }
 }
 
 final class BlockerContentView: NSView {
-    private let backgroundLayer = CAGradientLayer()
-    private let glowLayer = CAShapeLayer()
-    private let celestialLayer = CAShapeLayer()
-    private let cloudLayers = (0..<3).map { _ in CAShapeLayer() }
-    private let ridgeLayers = (0..<3).map { _ in CAShapeLayer() }
-    private let dividerLayer = CAShapeLayer()
+    private let mistLayer = CAGradientLayer()
+    private let membraneLayer = CAShapeLayer()
+    private let baseEdgeLayer = CAShapeLayer()
+    private let highlightEdgeLayer = CAShapeLayer()
     private let feedbackView = BlockerFeedbackView(frame: .zero)
 
-    private var palette = BlockerPalette.dark
-    private var sceneSize = CGSize.zero
+    private var palette = BlockerPalette.light
     private var hideFeedbackWorkItem: DispatchWorkItem?
+
+    var spillHeight: CGFloat = defaultBlockerSpillHeight {
+        didSet {
+            needsLayout = true
+        }
+    }
+
+    var onFeedbackVisibilityChanged: ((Bool) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        configureSceneLayers()
+        configureLayers()
         addSubview(feedbackView)
-
         updateAppearance()
     }
 
@@ -208,12 +228,13 @@ final class BlockerContentView: NSView {
 
     override func layout() {
         super.layout()
-        layoutScene()
+        layoutChrome()
         layoutFeedbackView()
-        if sceneSize != bounds.size {
-            sceneSize = bounds.size
-            restartAnimations()
-        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAppearance()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -221,262 +242,290 @@ final class BlockerContentView: NSView {
         updateAppearance()
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        updateAppearance()
-        restartAnimations()
-    }
-
-    private func updateAppearance() {
-        palette = paletteForCurrentAppearance()
-        layer?.backgroundColor = palette.backgroundBottom.cgColor
-        backgroundLayer.colors = [palette.backgroundTop.cgColor, palette.backgroundBottom.cgColor]
-        glowLayer.fillColor = palette.celestialGlow.cgColor
-        celestialLayer.fillColor = palette.celestial.cgColor
-        cloudLayers.forEach { $0.fillColor = palette.cloud.cgColor }
-        ridgeLayers[0].fillColor = palette.ridgeFar.cgColor
-        ridgeLayers[1].fillColor = palette.ridgeMid.cgColor
-        ridgeLayers[2].fillColor = palette.ridgeFront.cgColor
-        dividerLayer.strokeColor = palette.divider.cgColor
-        window?.backgroundColor = palette.backgroundBottom
-    }
-
-    private func configureSceneLayers() {
-        guard let rootLayer = layer else { return }
-
-        rootLayer.masksToBounds = true
-        backgroundLayer.startPoint = CGPoint(x: 0.5, y: 1)
-        backgroundLayer.endPoint = CGPoint(x: 0.5, y: 0)
-        rootLayer.addSublayer(backgroundLayer)
-
-        [glowLayer, celestialLayer].forEach(rootLayer.addSublayer)
-        cloudLayers.forEach(rootLayer.addSublayer)
-        ridgeLayers.forEach(rootLayer.addSublayer)
-        rootLayer.addSublayer(dividerLayer)
-
-        dividerLayer.lineWidth = 1
-        dividerLayer.fillColor = nil
-    }
-
-    private func layoutScene() {
-        guard !bounds.isEmpty else { return }
-
-        backgroundLayer.frame = bounds
-        celestialLayer.frame = bounds
-        glowLayer.frame = bounds
-        cloudLayers.forEach { $0.frame = bounds }
-        ridgeLayers.forEach { $0.frame = bounds }
-        dividerLayer.frame = bounds
-
-        let sceneInset = max(20, bounds.width * 0.035)
-        let celestialDiameter = min(bounds.height * 0.18, 32)
-        let celestialRect = CGRect(
-            x: bounds.maxX - sceneInset - celestialDiameter,
-            y: bounds.maxY - sceneInset - celestialDiameter,
-            width: celestialDiameter,
-            height: celestialDiameter
-        )
-        let glowInset = celestialDiameter * 0.95
-        let glowRect = celestialRect.insetBy(dx: -glowInset, dy: -glowInset)
-        glowLayer.path = CGPath(ellipseIn: glowRect, transform: nil)
-        celestialLayer.path = CGPath(ellipseIn: celestialRect, transform: nil)
-
-        let cloudRects = [
-            CGRect(x: bounds.width * 0.10, y: bounds.height * 0.64, width: bounds.width * 0.18, height: bounds.height * 0.12),
-            CGRect(x: bounds.width * 0.36, y: bounds.height * 0.72, width: bounds.width * 0.14, height: bounds.height * 0.10),
-            CGRect(x: bounds.width * 0.62, y: bounds.height * 0.60, width: bounds.width * 0.20, height: bounds.height * 0.13)
-        ]
-        for (cloudLayer, rect) in zip(cloudLayers, cloudRects) {
-            cloudLayer.path = cloudPath(in: rect)
-        }
-
-        let farBaseY = bounds.height * 0.34
-        let midBaseY = bounds.height * 0.23
-        let frontBaseY = bounds.height * 0.13
-
-        ridgeLayers[0].path = ridgePath(
-            baseY: farBaseY,
-            points: [
-                CGPoint(x: 0.00, y: farBaseY + bounds.height * 0.07),
-                CGPoint(x: 0.18, y: farBaseY + bounds.height * 0.18),
-                CGPoint(x: 0.37, y: farBaseY + bounds.height * 0.10),
-                CGPoint(x: 0.58, y: farBaseY + bounds.height * 0.20),
-                CGPoint(x: 0.78, y: farBaseY + bounds.height * 0.12),
-                CGPoint(x: 1.00, y: farBaseY + bounds.height * 0.16)
-            ]
-        )
-        ridgeLayers[1].path = ridgePath(
-            baseY: midBaseY,
-            points: [
-                CGPoint(x: 0.00, y: midBaseY + bounds.height * 0.05),
-                CGPoint(x: 0.16, y: midBaseY + bounds.height * 0.13),
-                CGPoint(x: 0.31, y: midBaseY + bounds.height * 0.08),
-                CGPoint(x: 0.49, y: midBaseY + bounds.height * 0.16),
-                CGPoint(x: 0.67, y: midBaseY + bounds.height * 0.09),
-                CGPoint(x: 0.84, y: midBaseY + bounds.height * 0.14),
-                CGPoint(x: 1.00, y: midBaseY + bounds.height * 0.07)
-            ]
-        )
-        ridgeLayers[2].path = ridgePath(
-            baseY: frontBaseY,
-            points: [
-                CGPoint(x: 0.00, y: frontBaseY + bounds.height * 0.04),
-                CGPoint(x: 0.14, y: frontBaseY + bounds.height * 0.09),
-                CGPoint(x: 0.28, y: frontBaseY + bounds.height * 0.06),
-                CGPoint(x: 0.46, y: frontBaseY + bounds.height * 0.12),
-                CGPoint(x: 0.61, y: frontBaseY + bounds.height * 0.07),
-                CGPoint(x: 0.80, y: frontBaseY + bounds.height * 0.11),
-                CGPoint(x: 1.00, y: frontBaseY + bounds.height * 0.05)
-            ]
-        )
-
-        let dividerPath = CGMutablePath()
-        dividerPath.move(to: CGPoint(x: 0, y: 0.5))
-        dividerPath.addLine(to: CGPoint(x: bounds.width, y: 0.5))
-        dividerLayer.path = dividerPath
-    }
-
     func showFeedback(_ style: BlockerFeedbackStyle) {
         hideFeedbackWorkItem?.cancel()
+        onFeedbackVisibilityChanged?(true)
 
         feedbackView.configure(style: style)
         layoutFeedbackView()
         feedbackView.isHidden = false
-        feedbackView.alphaValue = 0
+        feedbackView.alphaValue = 1
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            feedbackView.animator().alphaValue = 1
-        }
+        animateFeedbackIn()
+        animateMembrane(style: style)
 
         let hideWorkItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.2
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                self.feedbackView.animator().alphaValue = 0
-            }, completionHandler: {
-                self.feedbackView.isHidden = true
-            })
+            self?.animateFeedbackOut()
         }
-
         hideFeedbackWorkItem = hideWorkItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: hideWorkItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.08, execute: hideWorkItem)
     }
 
-    private func restartAnimations() {
+    private func configureLayers() {
+        guard let rootLayer = layer else { return }
+
+        rootLayer.masksToBounds = false
+        rootLayer.backgroundColor = NSColor.clear.cgColor
+
+        mistLayer.startPoint = CGPoint(x: 0.5, y: 1)
+        mistLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        rootLayer.addSublayer(mistLayer)
+
+        membraneLayer.fillColor = palette.idleMembrane.cgColor
+        rootLayer.addSublayer(membraneLayer)
+
+        baseEdgeLayer.fillColor = nil
+        baseEdgeLayer.lineWidth = 1.25
+        baseEdgeLayer.lineCap = .round
+        baseEdgeLayer.opacity = 0
+        rootLayer.addSublayer(baseEdgeLayer)
+
+        highlightEdgeLayer.fillColor = nil
+        highlightEdgeLayer.lineWidth = 5
+        highlightEdgeLayer.lineCap = .round
+        highlightEdgeLayer.opacity = 0
+        rootLayer.addSublayer(highlightEdgeLayer)
+    }
+
+    private func updateAppearance() {
+        palette = BlockerPalette.current(for: effectiveAppearance)
+        mistLayer.colors = [palette.mistTop.cgColor, palette.mistBottom.cgColor]
+        membraneLayer.fillColor = palette.idleMembrane.cgColor
+        baseEdgeLayer.strokeColor = palette.idleEdge.cgColor
+        window?.backgroundColor = .clear
+    }
+
+    private func layoutChrome() {
         guard !bounds.isEmpty else { return }
 
-        [glowLayer, celestialLayer, dividerLayer].forEach { $0.removeAllAnimations() }
-        cloudLayers.forEach { $0.removeAllAnimations() }
-        ridgeLayers.forEach { $0.removeAllAnimations() }
+        let dividerY = spillHeight
+        mistLayer.frame = CGRect(x: 0, y: dividerY, width: bounds.width, height: max(0, bounds.height - dividerY))
+        membraneLayer.frame = bounds
+        baseEdgeLayer.frame = bounds
+        highlightEdgeLayer.frame = bounds
 
-        let celestialFloat = CABasicAnimation(keyPath: "transform.translation.y")
-        celestialFloat.fromValue = -3
-        celestialFloat.toValue = 6
-        celestialFloat.duration = 18
-        celestialFloat.autoreverses = true
-        celestialFloat.repeatCount = .infinity
-        celestialFloat.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        celestialLayer.add(celestialFloat, forKey: "celestialFloat")
-        glowLayer.add(celestialFloat, forKey: "glowFloat")
-
-        let glowBreath = CABasicAnimation(keyPath: "opacity")
-        glowBreath.fromValue = 0.35
-        glowBreath.toValue = 0.55
-        glowBreath.duration = 9
-        glowBreath.autoreverses = true
-        glowBreath.repeatCount = .infinity
-        glowBreath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        glowLayer.add(glowBreath, forKey: "glowBreath")
-
-        for (index, cloudLayer) in cloudLayers.enumerated() {
-            let drift = CABasicAnimation(keyPath: "transform.translation.x")
-            drift.fromValue = -14 - CGFloat(index * 6)
-            drift.toValue = 18 + CGFloat(index * 8)
-            drift.duration = 24 + CFTimeInterval(index * 7)
-            drift.autoreverses = true
-            drift.repeatCount = .infinity
-            drift.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            cloudLayer.add(drift, forKey: "cloudDrift")
-
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0.60
-            fade.toValue = 0.88
-            fade.duration = 10 + CFTimeInterval(index * 3)
-            fade.autoreverses = true
-            fade.repeatCount = .infinity
-            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            cloudLayer.add(fade, forKey: "cloudFade")
-        }
-
-        for (index, ridgeLayer) in ridgeLayers.enumerated() {
-            let drift = CABasicAnimation(keyPath: "transform.translation.x")
-            drift.fromValue = -10 + CGFloat(index * 4)
-            drift.toValue = 10 - CGFloat(index * 3)
-            drift.duration = 36 + CFTimeInterval(index * 10)
-            drift.autoreverses = true
-            drift.repeatCount = .infinity
-            drift.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            ridgeLayer.add(drift, forKey: "ridgeDrift")
-        }
-    }
-
-    private func paletteForCurrentAppearance() -> BlockerPalette {
-        let bestMatch = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
-        if bestMatch == .darkAqua {
-            return .dark
-        }
-        return .light
-    }
-
-    private func ridgePath(baseY: CGFloat, points: [CGPoint]) -> CGPath {
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: 0, y: 0))
-        path.addLine(to: CGPoint(x: 0, y: baseY))
-        for point in points {
-            path.addLine(to: CGPoint(x: bounds.width * point.x, y: point.y))
-        }
-        path.addLine(to: CGPoint(x: bounds.width, y: 0))
-        path.closeSubpath()
-        return path
-    }
-
-    private func cloudPath(in rect: CGRect) -> CGPath {
-        let path = CGMutablePath()
-        let baseRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.55)
-        path.addRoundedRect(in: baseRect, cornerWidth: baseRect.height / 2, cornerHeight: baseRect.height / 2)
-        path.addEllipse(in: CGRect(
-            x: rect.minX + rect.width * 0.08,
-            y: rect.minY + rect.height * 0.22,
-            width: rect.width * 0.28,
-            height: rect.height * 0.52
-        ))
-        path.addEllipse(in: CGRect(
-            x: rect.minX + rect.width * 0.30,
-            y: rect.minY + rect.height * 0.34,
-            width: rect.width * 0.34,
-            height: rect.height * 0.58
-        ))
-        path.addEllipse(in: CGRect(
-            x: rect.minX + rect.width * 0.55,
-            y: rect.minY + rect.height * 0.18,
-            width: rect.width * 0.24,
-            height: rect.height * 0.48
-        ))
-        return path
+        membraneLayer.path = membranePath(depth: 1.5)
+        baseEdgeLayer.path = edgePath(depth: 0)
+        highlightEdgeLayer.path = edgePath(depth: 0)
     }
 
     private func layoutFeedbackView() {
         let fittingSize = feedbackView.fittingSize
-        let width = min(bounds.width - 28, max(164, fittingSize.width))
+        let width = min(bounds.width - 36, max(176, fittingSize.width))
+        let height: CGFloat = 36
+        let idealY = spillHeight - (height * 0.5)
+        let y = max(6, min(max(6, bounds.height - height - 10), idealY))
+
         feedbackView.frame = NSRect(
             x: (bounds.width - width) / 2,
-            y: max(10, bounds.height * 0.08),
+            y: y,
             width: width,
-            height: 30
+            height: height
         )
+    }
+
+    private func membranePath(depth: CGFloat) -> CGPath {
+        let dividerY = spillHeight
+        let dipY = max(0, dividerY - depth)
+        let path = CGMutablePath()
+
+        path.move(to: CGPoint(x: 0, y: bounds.height))
+        path.addLine(to: CGPoint(x: bounds.width, y: bounds.height))
+        path.addLine(to: CGPoint(x: bounds.width, y: dividerY))
+        path.addCurve(
+            to: CGPoint(x: 0, y: dividerY),
+            control1: CGPoint(x: bounds.width * 0.76, y: dipY),
+            control2: CGPoint(x: bounds.width * 0.24, y: dipY)
+        )
+        path.closeSubpath()
+        return path
+    }
+
+    private func edgePath(depth: CGFloat) -> CGPath {
+        let dividerY = spillHeight
+        let dipY = max(0, dividerY - depth)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 12, y: dividerY))
+        path.addCurve(
+            to: CGPoint(x: bounds.width - 12, y: dividerY),
+            control1: CGPoint(x: bounds.width * 0.28, y: dipY),
+            control2: CGPoint(x: bounds.width * 0.72, y: dipY)
+        )
+        return path
+    }
+
+    private func animateFeedbackIn() {
+        guard let layer = feedbackView.layer else { return }
+
+        layer.removeAllAnimations()
+
+        let transformAnimation = CAKeyframeAnimation(keyPath: "transform")
+        transformAnimation.values = [
+            NSValue(caTransform3D: CATransform3DConcat(
+                CATransform3DMakeScale(0.76, 0.80, 1),
+                CATransform3DMakeTranslation(0, 14, 0)
+            )),
+            NSValue(caTransform3D: CATransform3DConcat(
+                CATransform3DMakeScale(1.08, 0.92, 1),
+                CATransform3DMakeTranslation(0, -2, 0)
+            )),
+            NSValue(caTransform3D: CATransform3DMakeScale(0.97, 1.04, 1)),
+            NSValue(caTransform3D: CATransform3DIdentity)
+        ]
+        transformAnimation.keyTimes = [0, 0.50, 0.78, 1]
+        transformAnimation.duration = 0.42
+        transformAnimation.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeInEaseOut),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+
+        let opacityAnimation = CABasicAnimation(keyPath: "opacity")
+        opacityAnimation.fromValue = 0
+        opacityAnimation.toValue = 1
+        opacityAnimation.duration = 0.18
+
+        let group = CAAnimationGroup()
+        group.animations = [transformAnimation, opacityAnimation]
+        group.duration = 0.42
+        group.isRemovedOnCompletion = true
+
+        layer.add(group, forKey: "feedbackIn")
+    }
+
+    private func animateFeedbackOut() {
+        guard let layer = feedbackView.layer else {
+            feedbackView.isHidden = true
+            onFeedbackVisibilityChanged?(false)
+            return
+        }
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self else { return }
+            self.feedbackView.isHidden = true
+            self.onFeedbackVisibilityChanged?(false)
+        }
+
+        let transformAnimation = CABasicAnimation(keyPath: "transform")
+        transformAnimation.fromValue = CATransform3DIdentity
+        transformAnimation.toValue = CATransform3DMakeScale(0.92, 0.96, 1)
+        transformAnimation.duration = 0.18
+        transformAnimation.timingFunction = CAMediaTimingFunction(name: .easeIn)
+
+        let opacityAnimation = CABasicAnimation(keyPath: "opacity")
+        opacityAnimation.fromValue = 1
+        opacityAnimation.toValue = 0
+        opacityAnimation.duration = 0.18
+        opacityAnimation.timingFunction = CAMediaTimingFunction(name: .easeIn)
+
+        let group = CAAnimationGroup()
+        group.animations = [transformAnimation, opacityAnimation]
+        group.duration = 0.18
+        group.fillMode = .forwards
+        group.isRemovedOnCompletion = false
+
+        layer.add(group, forKey: "feedbackOut")
+        feedbackView.alphaValue = 0
+        CATransaction.commit()
+    }
+
+    private func animateMembrane(style: BlockerFeedbackStyle) {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let colors = style.colors(isDark: isDark)
+
+        membraneLayer.removeAllAnimations()
+        baseEdgeLayer.removeAllAnimations()
+        highlightEdgeLayer.removeAllAnimations()
+
+        membraneLayer.path = membranePath(depth: 1.5)
+        membraneLayer.fillColor = palette.idleMembrane.cgColor
+        baseEdgeLayer.path = edgePath(depth: 0)
+        baseEdgeLayer.strokeColor = palette.idleEdge.cgColor
+        baseEdgeLayer.opacity = 0
+        highlightEdgeLayer.path = edgePath(depth: 0)
+        highlightEdgeLayer.strokeColor = colors.accent.cgColor
+        highlightEdgeLayer.opacity = 0
+
+        let membranePathAnimation = CAKeyframeAnimation(keyPath: "path")
+        membranePathAnimation.values = [
+            membranePath(depth: 1.5),
+            membranePath(depth: min(spillHeight * 0.72, 28)),
+            membranePath(depth: min(spillHeight * 0.48, 19)),
+            membranePath(depth: min(spillHeight * 0.22, 8)),
+            membranePath(depth: 1.5)
+        ]
+        membranePathAnimation.keyTimes = [0, 0.32, 0.58, 0.80, 1]
+        membranePathAnimation.duration = 0.56
+
+        let membraneOpacityAnimation = CAKeyframeAnimation(keyPath: "opacity")
+        membraneOpacityAnimation.values = [0.10, 0.70, 0.46, 0.18, 0.10]
+        membraneOpacityAnimation.keyTimes = [0, 0.24, 0.52, 0.80, 1]
+        membraneOpacityAnimation.duration = 0.56
+
+        let fillAnimation = CABasicAnimation(keyPath: "fillColor")
+        fillAnimation.fromValue = palette.idleMembrane.cgColor
+        fillAnimation.toValue = colors.jelly.cgColor
+        fillAnimation.duration = 0.14
+        fillAnimation.autoreverses = true
+
+        let membraneGroup = CAAnimationGroup()
+        membraneGroup.animations = [membranePathAnimation, membraneOpacityAnimation, fillAnimation]
+        membraneGroup.duration = 0.56
+        membraneGroup.isRemovedOnCompletion = true
+        membraneLayer.add(membraneGroup, forKey: "membranePulse")
+
+        let basePathAnimation = CAKeyframeAnimation(keyPath: "path")
+        basePathAnimation.values = [
+            edgePath(depth: 0),
+            edgePath(depth: min(spillHeight * 0.74, 29)),
+            edgePath(depth: min(spillHeight * 0.44, 17)),
+            edgePath(depth: 0)
+        ]
+        basePathAnimation.keyTimes = [0, 0.32, 0.66, 1]
+        basePathAnimation.duration = 0.56
+
+        let baseOpacityAnimation = CAKeyframeAnimation(keyPath: "opacity")
+        baseOpacityAnimation.values = [0, 0.58, 0.22, 0]
+        baseOpacityAnimation.keyTimes = [0, 0.20, 0.62, 1]
+        baseOpacityAnimation.duration = 0.56
+
+        let baseWidthAnimation = CAKeyframeAnimation(keyPath: "lineWidth")
+        baseWidthAnimation.values = [1.25, 2.4, 1.7, 1.25]
+        baseWidthAnimation.keyTimes = [0, 0.26, 0.62, 1]
+        baseWidthAnimation.duration = 0.56
+
+        let baseGroup = CAAnimationGroup()
+        baseGroup.animations = [basePathAnimation, baseOpacityAnimation, baseWidthAnimation]
+        baseGroup.duration = 0.56
+        baseGroup.isRemovedOnCompletion = true
+        baseEdgeLayer.add(baseGroup, forKey: "baseEdgePulse")
+
+        let highlightPathAnimation = CAKeyframeAnimation(keyPath: "path")
+        highlightPathAnimation.values = [
+            edgePath(depth: 0),
+            edgePath(depth: min(spillHeight * 0.74, 29)),
+            edgePath(depth: min(spillHeight * 0.44, 17)),
+            edgePath(depth: 0)
+        ]
+        highlightPathAnimation.keyTimes = [0, 0.32, 0.66, 1]
+        highlightPathAnimation.duration = 0.56
+
+        let highlightOpacityAnimation = CAKeyframeAnimation(keyPath: "opacity")
+        highlightOpacityAnimation.values = [0, 0.78, 0.36, 0]
+        highlightOpacityAnimation.keyTimes = [0, 0.22, 0.58, 1]
+        highlightOpacityAnimation.duration = 0.56
+
+        let highlightWidthAnimation = CAKeyframeAnimation(keyPath: "lineWidth")
+        highlightWidthAnimation.values = [2, 8, 4, 2]
+        highlightWidthAnimation.keyTimes = [0, 0.26, 0.62, 1]
+        highlightWidthAnimation.duration = 0.56
+
+        let highlightGroup = CAAnimationGroup()
+        highlightGroup.animations = [highlightPathAnimation, highlightOpacityAnimation, highlightWidthAnimation]
+        highlightGroup.duration = 0.56
+        highlightGroup.isRemovedOnCompletion = true
+        highlightEdgeLayer.add(highlightGroup, forKey: "highlightPulse")
     }
 }
 
@@ -500,25 +549,29 @@ final class BlockerWindowController: ObservableObject {
             return
         }
 
-        let windowFrame = layout(for: screen, ratio: SettingsManager.shared.blockRatio).blockerFrame
-
+        let layout = layout(for: screen, ratio: SettingsManager.shared.blockRatio)
         let window = NSWindow(
-            contentRect: windowFrame,
+            contentRect: layout.blockerFrame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
         )
 
+        let blockerContentView = makeBlockerView()
+        blockerContentView.spillHeight = layout.spillHeight
+        blockerContentView.onFeedbackVisibilityChanged = { [weak self] isShowing in
+            self?.setFeedbackPresentation(isShowing)
+        }
+
         window.level = blockerWindowLevel
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        window.isOpaque = true
+        window.isOpaque = false
         window.hasShadow = false
         window.ignoresMouseEvents = true
         window.isMovable = false
         window.hidesOnDeactivate = false
         window.canHide = false
-        window.backgroundColor = .windowBackgroundColor
-        let blockerContentView = makeBlockerView()
+        window.backgroundColor = .clear
         window.contentView = blockerContentView
 
         window.orderFrontRegardless()
@@ -532,6 +585,7 @@ final class BlockerWindowController: ObservableObject {
             createAndShow()
             return
         }
+
         if window.isVisible {
             window.orderOut(nil)
             isVisible = false
@@ -543,8 +597,9 @@ final class BlockerWindowController: ObservableObject {
 
     func reposition() {
         guard let window = window, let screen = portraitScreen else { return }
-        let windowFrame = layout(for: screen, ratio: SettingsManager.shared.blockRatio).blockerFrame
-        window.setFrame(windowFrame, display: true)
+        let layout = layout(for: screen, ratio: SettingsManager.shared.blockRatio)
+        window.setFrame(layout.blockerFrame, display: true)
+        blockerContentView?.spillHeight = layout.spillHeight
         if isVisible {
             window.orderFrontRegardless()
         }
@@ -554,14 +609,24 @@ final class BlockerWindowController: ObservableObject {
         blockerContentView?.showFeedback(style)
     }
 
+    private func setFeedbackPresentation(_ isShowing: Bool) {
+        guard let window else { return }
+        window.level = isShowing ? feedbackWindowLevel : blockerWindowLevel
+        if isShowing, isVisible {
+            window.orderFrontRegardless()
+        }
+    }
+
     private func makeBlockerView() -> BlockerContentView {
         BlockerContentView(frame: .zero)
     }
 
-    private func layout(for screen: NSScreen, ratio: Double) -> (usableRect: NSRect, blockerFrame: NSRect) {
+    private func layout(for screen: NSScreen, ratio: Double) -> (usableRect: NSRect, blockerFrame: NSRect, spillHeight: CGFloat) {
         let managedHeight = max(0, screen.frame.height - reservedTopInset(for: screen))
         let blockedHeight = managedHeight * CGFloat(ratio)
         let usableHeight = max(0, managedHeight - blockedHeight)
+        let spillHeight = min(defaultBlockerSpillHeight, usableHeight)
+
         let usableRect = NSRect(
             x: screen.frame.origin.x,
             y: screen.frame.origin.y,
@@ -570,11 +635,11 @@ final class BlockerWindowController: ObservableObject {
         )
         let blockerFrame = NSRect(
             x: screen.frame.origin.x,
-            y: screen.frame.origin.y + usableHeight,
+            y: screen.frame.origin.y + usableHeight - spillHeight,
             width: screen.frame.width,
-            height: blockedHeight
+            height: blockedHeight + spillHeight
         )
-        return (usableRect, blockerFrame)
+        return (usableRect, blockerFrame, spillHeight)
     }
 
     private func reservedTopInset(for screen: NSScreen) -> CGFloat {
