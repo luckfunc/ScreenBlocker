@@ -81,16 +81,7 @@ final class BlockerWindowController: ObservableObject {
 
     var usableRect: NSRect? {
         guard let screen = portraitScreen else { return nil }
-        let ratio = SettingsManager.shared.blockRatio
-        let blockedHeight = screen.frame.height * ratio
-        let visibleBottom = screen.visibleFrame.origin.y
-        let usableTop = screen.frame.origin.y + screen.frame.height - blockedHeight
-        return NSRect(
-            x: screen.frame.origin.x,
-            y: visibleBottom,
-            width: screen.frame.width,
-            height: usableTop - visibleBottom
-        )
+        return layout(for: screen, ratio: SettingsManager.shared.blockRatio).usableRect
     }
 
     func createAndShow() {
@@ -99,14 +90,7 @@ final class BlockerWindowController: ObservableObject {
             return
         }
 
-        let ratio = SettingsManager.shared.blockRatio
-        let blockedHeight = screen.frame.height * ratio
-        let windowFrame = NSRect(
-            x: screen.frame.origin.x,
-            y: screen.frame.origin.y + screen.frame.height - blockedHeight,
-            width: screen.frame.width,
-            height: blockedHeight
-        )
+        let windowFrame = layout(for: screen, ratio: SettingsManager.shared.blockRatio).blockerFrame
 
         let window = NSWindow(
             contentRect: windowFrame,
@@ -147,14 +131,7 @@ final class BlockerWindowController: ObservableObject {
 
     func reposition() {
         guard let window = window, let screen = portraitScreen else { return }
-        let ratio = SettingsManager.shared.blockRatio
-        let blockedHeight = screen.frame.height * ratio
-        let windowFrame = NSRect(
-            x: screen.frame.origin.x,
-            y: screen.frame.origin.y + screen.frame.height - blockedHeight,
-            width: screen.frame.width,
-            height: blockedHeight
-        )
+        let windowFrame = layout(for: screen, ratio: SettingsManager.shared.blockRatio).blockerFrame
         window.setFrame(windowFrame, display: true)
         if isVisible {
             window.orderFrontRegardless()
@@ -163,5 +140,30 @@ final class BlockerWindowController: ObservableObject {
 
     private func makeBlockerView() -> NSView {
         BlockerContentView(frame: .zero)
+    }
+
+    private func layout(for screen: NSScreen, ratio: Double) -> (usableRect: NSRect, blockerFrame: NSRect) {
+        let managedHeight = max(0, screen.frame.height - reservedTopInset(for: screen))
+        let blockedHeight = managedHeight * CGFloat(ratio)
+        let usableHeight = max(0, managedHeight - blockedHeight)
+        let usableRect = NSRect(
+            x: screen.frame.origin.x,
+            y: screen.frame.origin.y,
+            width: screen.frame.width,
+            height: usableHeight
+        )
+        let blockerFrame = NSRect(
+            x: screen.frame.origin.x,
+            y: screen.frame.origin.y + usableHeight,
+            width: screen.frame.width,
+            height: blockedHeight
+        )
+        return (usableRect, blockerFrame)
+    }
+
+    private func reservedTopInset(for screen: NSScreen) -> CGFloat {
+        let visibleTopInset = max(0, screen.frame.maxY - screen.visibleFrame.maxY)
+        let separateSpacesInset = NSScreen.screensHaveSeparateSpaces ? NSStatusBar.system.thickness : 0
+        return max(visibleTopInset, separateSpacesInset)
     }
 }

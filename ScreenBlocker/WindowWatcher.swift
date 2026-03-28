@@ -107,7 +107,7 @@ final class WindowWatcher: ObservableObject {
         defer { isAdjustingAllWindows = false }
 
         let screenFrame = portraitScreen.frame
-        let desktopMaxY = NSScreen.screens.map(\.frame.maxY).max() ?? screenFrame.maxY
+        let axCoordinateMaxY = Self.axCoordinateMaxY(fallback: screenFrame.maxY)
         let myPid = ProcessInfo.processInfo.processIdentifier
         var needsFollowUpAdjustment = false
 
@@ -124,7 +124,7 @@ final class WindowWatcher: ObservableObject {
                     window,
                     screenFrame: screenFrame,
                     usableRect: usableRect,
-                    desktopMaxY: desktopMaxY
+                    axCoordinateMaxY: axCoordinateMaxY
                 )
                 if outcome == .needsFollowUp {
                     needsFollowUpAdjustment = true
@@ -251,7 +251,7 @@ final class WindowWatcher: ObservableObject {
         _ window: AXUIElement,
         screenFrame: NSRect,
         usableRect: NSRect,
-        desktopMaxY: CGFloat
+        axCoordinateMaxY: CGFloat
     ) -> AdjustmentOutcome {
         var posRef: CFTypeRef?
         var sizeRef: CFTypeRef?
@@ -266,8 +266,7 @@ final class WindowWatcher: ObservableObject {
         AXValueGetValue(posRef as! AXValue, .cgPoint, &position)
         AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
 
-        let screenTopCG = desktopMaxY - screenFrame.maxY
-        let screenCGRect = NSRect(x: screenFrame.origin.x, y: screenTopCG, width: screenFrame.width, height: screenFrame.height)
+        let screenCGRect = axRect(for: screenFrame, axCoordinateMaxY: axCoordinateMaxY)
 
         let centerX = position.x + size.width / 2
         let centerY = position.y + size.height / 2
@@ -281,10 +280,18 @@ final class WindowWatcher: ObservableObject {
             return result == .success ? .needsFollowUp : .unchanged
         }
 
-        let usableTopCG = desktopMaxY - usableRect.maxY
-        let usableBottomCG = usableTopCG + usableRect.height
+        let usableCGRect = axRect(for: usableRect, axCoordinateMaxY: axCoordinateMaxY)
+        let usableTopCG = usableCGRect.minY
+        let usableBottomCG = usableCGRect.maxY
+        let topGap = position.y - usableTopCG
+        let shouldSnapToTopEdge =
+            topGap > 48 &&
+            (
+                size.width >= screenFrame.width * 0.72 ||
+                size.height >= usableRect.height * 0.55
+            )
 
-        guard position.y < usableTopCG || position.y + size.height > usableBottomCG else {
+        guard shouldSnapToTopEdge || position.y < usableTopCG || position.y + size.height > usableBottomCG else {
             return .unchanged
         }
 
@@ -311,6 +318,19 @@ final class WindowWatcher: ObservableObject {
         }
 
         return fullScreen.boolValue
+    }
+
+    private static func axCoordinateMaxY(fallback: CGFloat) -> CGFloat {
+        NSScreen.screens.first(where: { $0.frame.origin.equalTo(.zero) })?.frame.maxY ?? fallback
+    }
+
+    private static func axRect(for appKitRect: NSRect, axCoordinateMaxY: CGFloat) -> NSRect {
+        NSRect(
+            x: appKitRect.origin.x,
+            y: axCoordinateMaxY - appKitRect.maxY,
+            width: appKitRect.width,
+            height: appKitRect.height
+        )
     }
 }
 
