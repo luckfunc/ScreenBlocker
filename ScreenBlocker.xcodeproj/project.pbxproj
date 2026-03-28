@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		AA000001 /* ScreenBlockerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000011 /* ScreenBlockerApp.swift */; };
-		AA000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000012 /* ContentView.swift */; };
 		AA000003 /* BlockerWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000013 /* BlockerWindow.swift */; };
 		AA000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000014 /* Assets.xcassets */; };
 		AA000005 /* WindowWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000017 /* WindowWatcher.swift */; };
@@ -19,7 +18,6 @@
 /* Begin PBXFileReference section */
 		AA000010 /* ScreenBlocker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScreenBlocker.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA000011 /* ScreenBlockerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenBlockerApp.swift; sourceTree = "<group>"; };
-		AA000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AA000013 /* BlockerWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockerWindow.swift; sourceTree = "<group>"; };
 		AA000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -52,7 +50,6 @@
 			isa = PBXGroup;
 			children = (
 				AA000011 /* ScreenBlockerApp.swift */,
-				AA000012 /* ContentView.swift */,
 				AA000013 /* BlockerWindow.swift */,
 				AA000017 /* WindowWatcher.swift */,
 				AA000018 /* SettingsManager.swift */,
@@ -142,7 +139,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA000001 /* ScreenBlockerApp.swift in Sources */,
-				AA000002 /* ContentView.swift in Sources */,
 				AA000003 /* BlockerWindow.swift in Sources */,
 				AA000005 /* WindowWatcher.swift in Sources */,
 				AA000006 /* SettingsManager.swift in Sources */,

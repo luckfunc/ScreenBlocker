@@ -1,75 +1,50 @@
 # ScreenBlocker
 
-一个给竖屏副显示器用的 macOS 菜单栏工具。它会在竖屏上方放置遮挡区，并尽量把其他应用窗口约束到下半部分，减少抬头看高处内容的负担。
+一个给竖屏副显示器使用的 macOS 菜单栏工具。
 
-## 当前能力
+它会在竖屏上方生成一块遮挡区，并尽量把其他应用窗口约束到下半部分，减少频繁抬头看高处内容的负担。
 
-- 在竖屏显示器上方显示遮挡层
+## 适合谁
+
+- 有一块竖着放的副显示器
+- 觉得副屏太高，只想使用下半部分
+- 想让常用窗口尽量贴着下半区工作
+
+## 功能
+
+- 在竖屏上方显示遮挡层
 - 自动把普通窗口压回可用区域
 - 尽量处理窗口全屏或铺满后的回退位置
-- 保留顶部菜单栏区域，不再让遮挡层吞掉系统菜单栏
+- 保留顶部菜单栏区域，不遮住系统菜单栏
 - 提供菜单栏入口和设置面板
 
-## 运行要求
+## 使用要求
 
 - macOS 14 或更高版本
 - 至少一块竖屏显示器
-- 需要给应用开启“辅助功能”权限，否则无法移动其他应用窗口
+- 需要开启“辅助功能”权限，否则应用无法移动其他窗口
 
-## 本地运行
+## 安装
 
-直接用 Xcode：
+推荐从 GitHub Releases 下载 `.dmg` 安装包。
 
-```bash
-open ScreenBlocker.xcodeproj
-```
+如果当前仓库还没有发布页，也可以先使用 Actions 产出的 `.dmg` artifact，或者自行构建。
 
-或者命令行构建：
+## 使用方式
 
-```bash
-xcodebuild \
-  -project ScreenBlocker.xcodeproj \
-  -scheme ScreenBlocker \
-  -configuration Debug \
-  build \
-  CODE_SIGNING_ALLOWED=NO
-```
+- 启动后从菜单栏打开设置
+- 调整上方遮挡比例
+- 给应用授予“辅助功能”权限
+- 把窗口拖到竖屏时，应用会尽量把它们压回可用区域
 
-## 生成 DMG
-
-仓库现在自带打包脚本：
-
-```bash
-./scripts/create-dmg.sh
-```
-
-生成结果会放在：
-
-```bash
-dist
-```
-
-默认产物是未签名 `.dmg`。本地首次打开时，macOS 可能会提示来源未验证，需要手动确认打开。
-
-## GitHub Actions
-
-仓库包含一个 `Build DMG` 工作流：
-
-- 推送到 `main` 时会自动构建并上传 `.dmg` artifact
-- 手动触发工作流时也会生成 `.dmg`
-- 推送 `v*` 标签时，会把 `.dmg` 挂到 GitHub Release
-
-如果你想让别人直接下载安装包，最合适的做法是发一个版本标签，例如：
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-这样 GitHub Releases 里就会出现对应的 `.dmg` 文件。
-
-## 已知限制
+## 注意
 
 - 一些应用的特殊窗口、全屏模式或自绘窗口不一定完全受控
-- 当前打包产物没有开发者签名和 notarization
 - 多显示器布局非常特殊时，仍然可能需要继续微调窗口吸附逻辑
+- 当前安装包可能没有开发者签名，首次打开时 macOS 可能会提示确认
+
+## 开发说明
+
+构建、打包、CI 和发布相关说明见：
+
+[docs/development.md](/Users/xdd/Desktop/screen/ScreenBlocker/docs/development.md)
