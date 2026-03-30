@@ -551,6 +551,11 @@ final class BlockerWindowController: ObservableObject {
     private var window: NSWindow?
     private weak var blockerContentView: BlockerContentView?
     @Published var isVisible = true
+    @Published private(set) var blockRatio: Double
+
+    init(blockRatio: Double) {
+        self.blockRatio = SettingsManager.clampedBlockRatio(blockRatio)
+    }
 
     var portraitScreen: NSScreen? {
         NSScreen.screens.first { $0.frame.height > $0.frame.width }
@@ -558,7 +563,7 @@ final class BlockerWindowController: ObservableObject {
 
     var usableRect: NSRect? {
         guard let screen = portraitScreen else { return nil }
-        return layout(for: screen, ratio: SettingsManager.shared.blockRatio).usableRect
+        return layout(for: screen, ratio: blockRatio).usableRect
     }
 
     func createAndShow() {
@@ -567,7 +572,7 @@ final class BlockerWindowController: ObservableObject {
             return
         }
 
-        let layout = layout(for: screen, ratio: SettingsManager.shared.blockRatio)
+        let layout = layout(for: screen, ratio: blockRatio)
         let window = NSWindow(
             contentRect: layout.blockerFrame,
             styleMask: .borderless,
@@ -615,12 +620,19 @@ final class BlockerWindowController: ObservableObject {
 
     func reposition() {
         guard let window = window, let screen = portraitScreen else { return }
-        let layout = layout(for: screen, ratio: SettingsManager.shared.blockRatio)
+        let layout = layout(for: screen, ratio: blockRatio)
         window.setFrame(layout.blockerFrame, display: true)
         blockerContentView?.spillHeight = layout.spillHeight
         if isVisible {
             window.orderFrontRegardless()
         }
+    }
+
+    func setBlockRatio(_ value: Double) {
+        let clampedValue = SettingsManager.clampedBlockRatio(value)
+        guard blockRatio != clampedValue else { return }
+        blockRatio = clampedValue
+        reposition()
     }
 
     func showAdjustmentFeedback(_ style: BlockerFeedbackStyle) {

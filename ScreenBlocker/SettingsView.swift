@@ -19,7 +19,6 @@ struct SettingsView: View {
         self._interactions = StateObject(
             wrappedValue: SettingsInteractionController(
                 settings: settings,
-                windowController: windowController,
                 windowWatcher: windowWatcher
             )
         )
@@ -220,17 +219,14 @@ final class SettingsInteractionController: ObservableObject {
     @Published private(set) var blockRatio: Double
 
     private let settings: SettingsManager
-    private weak var windowController: BlockerWindowController?
     private weak var windowWatcher: WindowWatcher?
     private var isInteracting = false
 
     init(
         settings: SettingsManager,
-        windowController: BlockerWindowController,
         windowWatcher: WindowWatcher
     ) {
         self.settings = settings
-        self.windowController = windowController
         self.windowWatcher = windowWatcher
         self.blockRatio = settings.blockRatio
     }
@@ -257,7 +253,6 @@ final class SettingsInteractionController: ObservableObject {
     func commitBlockRatio(_ value: Double, adjustmentDelay: TimeInterval) {
         blockRatio = SettingsManager.clampedBlockRatio(value)
         settings.setBlockRatio(blockRatio)
-        windowController?.reposition()
         windowWatcher?.resume(applyPendingAdjustment: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + adjustmentDelay) { [weak self] in
             self?.windowWatcher?.adjustAllWindows()

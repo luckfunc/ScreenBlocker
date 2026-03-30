@@ -14,7 +14,8 @@ struct ScreenBlockerApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let windowController = BlockerWindowController()
+    private let settings = SettingsManager.shared
+    lazy var windowController = BlockerWindowController(blockRatio: settings.blockRatio)
     lazy var windowWatcher: WindowWatcher = {
         let watcher = WindowWatcher(blockerController: windowController)
         watcher.onAdjustmentFeedback = { [weak self] feedback in
@@ -41,18 +42,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if !SettingsManager.shared.showMenuBarIcon {
-            SettingsManager.shared.setShowMenuBarIcon(true)
+        if !settings.showMenuBarIcon {
+            settings.setShowMenuBarIcon(true)
         }
 
         windowController.createAndShow()
         windowWatcher.start()
-        statusBarController.setVisible(SettingsManager.shared.showMenuBarIcon)
+        statusBarController.setVisible(settings.showMenuBarIcon)
 
-        SettingsManager.shared.$showMenuBarIcon
+        settings.$showMenuBarIcon
             .removeDuplicates()
             .sink { [weak self] isVisible in
                 self?.statusBarController.setVisible(isVisible)
+            }
+            .store(in: &cancellables)
+
+        settings.$blockRatio
+            .removeDuplicates()
+            .sink { [weak self] value in
+                self?.windowController.setBlockRatio(value)
             }
             .store(in: &cancellables)
 
@@ -66,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        SettingsManager.shared.setShowMenuBarIcon(true)
+        settings.setShowMenuBarIcon(true)
         return true
     }
 }

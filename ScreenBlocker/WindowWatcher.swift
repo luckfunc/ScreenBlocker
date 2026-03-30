@@ -24,6 +24,7 @@ final class WindowWatcher: ObservableObject {
     private var feedbackRequested = false
     private var suppressEventsUntil = Date.distantPast
     private var feedbackCooldownUntil = Date.distantPast
+    private let adjustmentEngine = WindowAdjustmentEngine()
 
     var onAdjustmentFeedback: ((WindowAdjustmentFeedback) -> Void)?
 
@@ -119,57 +120,26 @@ final class WindowWatcher: ObservableObject {
         isAdjustingAllWindows = true
         defer { isAdjustingAllWindows = false }
 
-        let screenFrame = portraitScreen.frame
-        let axCoordinateMaxY = Self.axCoordinateMaxY(fallback: screenFrame.maxY)
-        let myPid = ProcessInfo.processInfo.processIdentifier
-        var needsFollowUpAdjustment = false
-        var didConstrainWindow = false
-        var didFailToConstrainWindow = false
+        let result = adjustmentEngine.adjustWindows(
+            usableRect: usableRect,
+            portraitScreen: portraitScreen
+        )
 
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.processIdentifier != myPid {
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            AXUIElementSetMessagingTimeout(appRef, 0.2)
-
-            var windowsRef: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-                  let windows = windowsRef as? [AXUIElement] else { continue }
-
-            for window in windows {
-                let outcome = Self.adjustWindowIfNeeded(
-                    window,
-                    screenFrame: screenFrame,
-                    usableRect: usableRect,
-                    axCoordinateMaxY: axCoordinateMaxY
-                )
-                switch outcome {
-                case .unchanged:
-                    break
-                case .adjusted:
-                    didConstrainWindow = true
-                case .needsFollowUp:
-                    needsFollowUpAdjustment = true
-                    didConstrainWindow = true
-                case .failed:
-                    didFailToConstrainWindow = true
-                }
-            }
-        }
-
-        if didConstrainWindow || didFailToConstrainWindow {
+        if result.didConstrainWindow || result.didFailToConstrainWindow {
             suppressEventsUntil = Date().addingTimeInterval(0.45)
         }
 
         if shouldReportFeedback {
-            if didFailToConstrainWindow {
+            if result.didFailToConstrainWindow {
                 onAdjustmentFeedback?(.failed)
                 feedbackCooldownUntil = Date().addingTimeInterval(1.0)
-            } else if didConstrainWindow {
+            } else if result.didConstrainWindow {
                 onAdjustmentFeedback?(.constrained)
                 feedbackCooldownUntil = Date().addingTimeInterval(1.0)
             }
         }
 
-        if needsFollowUpAdjustment {
+        if result.needsFollowUpAdjustment {
             scheduleAdjustAllWindows(after: 0.5)
         }
     }
@@ -254,7 +224,7 @@ final class WindowWatcher: ObservableObject {
 
     func handleWindowEvent(_ element: AXUIElement, notification: CFString) {
         guard !paused, isEnabled else { return }
-        guard Self.shouldManageWindow(element) else { return }
+        guard adjustmentEngine.shouldManageWindow(element) else { return }
 
         let now = Date()
         if now >= suppressEventsUntil && now >= feedbackCooldownUntil {
@@ -291,9 +261,15 @@ final class WindowWatcher: ObservableObject {
         scheduledAdjustment = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
+}
 
-    // MARK: - Window adjustment
+private struct WindowAdjustmentResult {
+    var didConstrainWindow = false
+    var didFailToConstrainWindow = false
+    var needsFollowUpAdjustment = false
+}
 
+private final class WindowAdjustmentEngine {
     private enum AdjustmentOutcome {
         case unchanged
         case adjusted
@@ -301,69 +277,45 @@ final class WindowWatcher: ObservableObject {
         case failed
     }
 
-    private static func adjustWindowIfNeeded(
-        _ window: AXUIElement,
-        screenFrame: NSRect,
-        usableRect: NSRect,
-        axCoordinateMaxY: CGFloat
-    ) -> AdjustmentOutcome {
-        guard shouldManageWindow(window) else {
-            return .unchanged
+    func adjustWindows(usableRect: NSRect, portraitScreen: NSScreen) -> WindowAdjustmentResult {
+        let screenFrame = portraitScreen.frame
+        let axCoordinateMaxY = Self.axCoordinateMaxY(fallback: screenFrame.maxY)
+        let myPid = ProcessInfo.processInfo.processIdentifier
+        var result = WindowAdjustmentResult()
+
+        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.processIdentifier != myPid {
+            let appRef = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(appRef, 0.2)
+
+            var windowsRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+                  let windows = windowsRef as? [AXUIElement] else { continue }
+
+            for window in windows {
+                let outcome = adjustWindowIfNeeded(
+                    window,
+                    screenFrame: screenFrame,
+                    usableRect: usableRect,
+                    axCoordinateMaxY: axCoordinateMaxY
+                )
+                switch outcome {
+                case .unchanged:
+                    break
+                case .adjusted:
+                    result.didConstrainWindow = true
+                case .needsFollowUp:
+                    result.didConstrainWindow = true
+                    result.needsFollowUpAdjustment = true
+                case .failed:
+                    result.didFailToConstrainWindow = true
+                }
+            }
         }
 
-        var posRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-
-        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef) == .success,
-              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success else {
-            return .unchanged
-        }
-
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        AXValueGetValue(posRef as! AXValue, .cgPoint, &position)
-        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
-
-        let screenCGRect = axRect(for: screenFrame, axCoordinateMaxY: axCoordinateMaxY)
-
-        let centerX = position.x + size.width / 2
-        let centerY = position.y + size.height / 2
-        guard centerX >= screenCGRect.minX && centerX <= screenCGRect.maxX &&
-              centerY >= screenCGRect.minY && centerY <= screenCGRect.maxY else {
-            return .unchanged
-        }
-
-        if isWindowFullScreen(window) {
-            let result = AXUIElementSetAttributeValue(window, axFullScreenAttribute, kCFBooleanFalse)
-            return result == .success ? .needsFollowUp : .failed
-        }
-
-        let usableCGRect = axRect(for: usableRect, axCoordinateMaxY: axCoordinateMaxY)
-        let usableTopCG = usableCGRect.minY
-        let usableBottomCG = usableCGRect.maxY
-        let overlapsBlockedZone = position.y < usableTopCG
-        let exceedsBottomBoundary = position.y + size.height > usableBottomCG
-
-        guard overlapsBlockedZone || exceedsBottomBoundary else {
-            return .unchanged
-        }
-
-        let newY = usableTopCG
-        var newHeight = size.height
-        if newY + newHeight > usableBottomCG {
-            newHeight = usableBottomCG - newY
-            if newHeight < 200 { newHeight = 200 }
-        }
-
-        var newPos = CGPoint(x: position.x, y: newY)
-        var newSize = CGSize(width: size.width, height: newHeight)
-        let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &newPos)!)
-        let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &newSize)!)
-
-        return (positionResult == .success || sizeResult == .success) ? .adjusted : .failed
+        return result
     }
 
-    private static func shouldManageWindow(_ window: AXUIElement) -> Bool {
+    func shouldManageWindow(_ window: AXUIElement) -> Bool {
         var roleRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &roleRef) == .success,
               let role = roleRef as? String,
@@ -386,6 +338,68 @@ final class WindowWatcher: ObservableObject {
         }
 
         return true
+    }
+
+    private func adjustWindowIfNeeded(
+        _ window: AXUIElement,
+        screenFrame: NSRect,
+        usableRect: NSRect,
+        axCoordinateMaxY: CGFloat
+    ) -> AdjustmentOutcome {
+        guard shouldManageWindow(window) else {
+            return .unchanged
+        }
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success else {
+            return .unchanged
+        }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posRef as! AXValue, .cgPoint, &position)
+        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+
+        let screenCGRect = Self.axRect(for: screenFrame, axCoordinateMaxY: axCoordinateMaxY)
+
+        let centerX = position.x + size.width / 2
+        let centerY = position.y + size.height / 2
+        guard centerX >= screenCGRect.minX && centerX <= screenCGRect.maxX &&
+              centerY >= screenCGRect.minY && centerY <= screenCGRect.maxY else {
+            return .unchanged
+        }
+
+        if Self.isWindowFullScreen(window) {
+            let result = AXUIElementSetAttributeValue(window, axFullScreenAttribute, kCFBooleanFalse)
+            return result == .success ? .needsFollowUp : .failed
+        }
+
+        let usableCGRect = Self.axRect(for: usableRect, axCoordinateMaxY: axCoordinateMaxY)
+        let usableTopCG = usableCGRect.minY
+        let usableBottomCG = usableCGRect.maxY
+        let overlapsBlockedZone = position.y < usableTopCG
+        let exceedsBottomBoundary = position.y + size.height > usableBottomCG
+
+        guard overlapsBlockedZone || exceedsBottomBoundary else {
+            return .unchanged
+        }
+
+        let newY = usableTopCG
+        var newHeight = size.height
+        if newY + newHeight > usableBottomCG {
+            newHeight = usableBottomCG - newY
+            if newHeight < 200 { newHeight = 200 }
+        }
+
+        var newPos = CGPoint(x: position.x, y: newY)
+        var newSize = CGSize(width: size.width, height: newHeight)
+        let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &newPos)!)
+        let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &newSize)!)
+
+        return (positionResult == .success || sizeResult == .success) ? .adjusted : .failed
     }
 
     private static func isWindowFullScreen(_ window: AXUIElement) -> Bool {
