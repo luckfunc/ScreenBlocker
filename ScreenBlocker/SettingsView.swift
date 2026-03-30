@@ -2,11 +2,28 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject var settings = SettingsManager.shared
-    @ObservedObject var windowController: BlockerWindowController
-    @ObservedObject var windowWatcher: WindowWatcher
+    @ObservedObject private var settings: SettingsManager
+    @ObservedObject private var windowController: BlockerWindowController
+    @ObservedObject private var windowWatcher: WindowWatcher
 
-    @State private var sliderValue: Double = SettingsManager.shared.blockRatio
+    @StateObject private var interactions: SettingsInteractionController
+
+    init(
+        windowController: BlockerWindowController,
+        windowWatcher: WindowWatcher,
+        settings: SettingsManager = .shared
+    ) {
+        self._settings = ObservedObject(wrappedValue: settings)
+        self._windowController = ObservedObject(wrappedValue: windowController)
+        self._windowWatcher = ObservedObject(wrappedValue: windowWatcher)
+        self._interactions = StateObject(
+            wrappedValue: SettingsInteractionController(
+                settings: settings,
+                windowController: windowController,
+                windowWatcher: windowWatcher
+            )
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -27,7 +44,10 @@ struct SettingsView: View {
         }
         .frame(width: 420, height: 458)
         .onAppear {
-            sliderValue = settings.blockRatio
+            interactions.syncCommittedBlockRatio(settings.blockRatio)
+        }
+        .onReceive(settings.$blockRatio) { value in
+            interactions.syncCommittedBlockRatio(value)
         }
     }
 
@@ -79,11 +99,11 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
-                        Slider(value: sliderBinding, in: 0.1...0.8, step: 0.01) { editing in
+                        Slider(value: sliderBinding, in: SettingsManager.blockRatioRange, step: 0.01) { editing in
                             if editing {
-                                windowWatcher.pause()
+                                interactions.beginBlockRatioInteraction()
                             } else {
-                                commitSliderValue(sliderValue, adjustmentDelay: 0.35)
+                                interactions.finishBlockRatioInteraction()
                             }
                         }
                         .controlSize(.small)
@@ -92,11 +112,11 @@ struct SettingsView: View {
                             value: percentageValue,
                             range: 10...80
                         ) { newValue in
-                            commitSliderValue(Double(newValue) / 100, adjustmentDelay: 0.12)
+                            interactions.commitBlockRatio(Double(newValue) / 100, adjustmentDelay: 0.12)
                         }
                     }
 
-                    BlockedAreaPreview(ratio: sliderValue)
+                    BlockedAreaPreview(ratio: interactions.blockRatio)
                         .frame(height: 9)
 
                     Text(pixelDescription)
@@ -113,7 +133,7 @@ struct SettingsView: View {
                 ToggleRow(
                     title: "登录时自动启动",
                     subtitle: "启动时自动恢复遮挡状态",
-                    isOn: $settings.launchAtLogin
+                    isOn: launchAtLoginBinding
                 )
 
                 SettingsSeparator()
@@ -147,7 +167,7 @@ struct SettingsView: View {
     }
 
     private var percentageValue: Int {
-        Int((sliderValue * 100).rounded())
+        Int((interactions.blockRatio * 100).rounded())
     }
 
     private var pixelDescription: String {
@@ -155,33 +175,23 @@ struct SettingsView: View {
             return "未检测到竖屏显示器"
         }
 
-        let blockedPx = Int(screen.frame.height * sliderValue)
+        let blockedPx = Int(screen.frame.height * interactions.blockRatio)
         let usablePx = Int(screen.frame.height) - blockedPx
         return "遮挡 \(blockedPx) px，可用 \(usablePx) px"
     }
 
     private var sliderBinding: Binding<Double> {
         Binding(
-            get: { sliderValue },
-            set: { newValue in
-                sliderValue = clampedRatio(newValue)
-            }
+            get: { interactions.blockRatio },
+            set: interactions.updateBlockRatioDraft(_:)
         )
     }
 
-    private func commitSliderValue(_ value: Double, adjustmentDelay: TimeInterval) {
-        sliderValue = clampedRatio(value)
-        settings.blockRatio = sliderValue
-        settings.saveBlockRatio()
-        windowController.reposition()
-        windowWatcher.resume(applyPendingAdjustment: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + adjustmentDelay) {
-            windowWatcher.adjustAllWindows()
-        }
-    }
-
-    private func clampedRatio(_ value: Double) -> Double {
-        min(max((value * 100).rounded() / 100, 0.1), 0.8)
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { settings.launchAtLogin },
+            set: settings.setLaunchAtLogin(_:)
+        )
     }
 
     private var topGlowColor: NSColor {
@@ -203,6 +213,55 @@ struct SettingsView: View {
             return NSColor(calibratedRed: 0.54, green: 0.28, blue: 0.28, alpha: 1.0)
         }
         return NSColor(calibratedRed: 0.84, green: 0.77, blue: 0.74, alpha: 1.0)
+    }
+}
+
+final class SettingsInteractionController: ObservableObject {
+    @Published private(set) var blockRatio: Double
+
+    private let settings: SettingsManager
+    private weak var windowController: BlockerWindowController?
+    private weak var windowWatcher: WindowWatcher?
+    private var isInteracting = false
+
+    init(
+        settings: SettingsManager,
+        windowController: BlockerWindowController,
+        windowWatcher: WindowWatcher
+    ) {
+        self.settings = settings
+        self.windowController = windowController
+        self.windowWatcher = windowWatcher
+        self.blockRatio = settings.blockRatio
+    }
+
+    func syncCommittedBlockRatio(_ value: Double) {
+        guard !isInteracting else { return }
+        blockRatio = SettingsManager.clampedBlockRatio(value)
+    }
+
+    func beginBlockRatioInteraction() {
+        isInteracting = true
+        windowWatcher?.pause()
+    }
+
+    func updateBlockRatioDraft(_ value: Double) {
+        blockRatio = SettingsManager.clampedBlockRatio(value)
+    }
+
+    func finishBlockRatioInteraction() {
+        isInteracting = false
+        commitBlockRatio(blockRatio, adjustmentDelay: 0.35)
+    }
+
+    func commitBlockRatio(_ value: Double, adjustmentDelay: TimeInterval) {
+        blockRatio = SettingsManager.clampedBlockRatio(value)
+        settings.setBlockRatio(blockRatio)
+        windowController?.reposition()
+        windowWatcher?.resume(applyPendingAdjustment: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + adjustmentDelay) { [weak self] in
+            self?.windowWatcher?.adjustAllWindows()
+        }
     }
 }
 

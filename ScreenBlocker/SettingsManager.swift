@@ -12,34 +12,47 @@ final class SettingsManager: ObservableObject {
         static let showMenuBarIcon = "showMenuBarIcon"
     }
 
-    @Published var blockRatio: Double
+    @Published private(set) var blockRatio: Double
+    @Published private(set) var launchAtLogin: Bool
+    @Published private(set) var showMenuBarIcon: Bool
 
-    @Published var launchAtLogin: Bool {
-        didSet {
-            UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
-            applyLaunchAtLogin()
-        }
-    }
+    private let defaults: UserDefaults
 
-    @Published var showMenuBarIcon: Bool {
-        didSet { UserDefaults.standard.set(showMenuBarIcon, forKey: Keys.showMenuBarIcon) }
-    }
-
-    private init() {
-        let defaults = UserDefaults.standard
+    private init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         if defaults.object(forKey: Keys.blockRatio) == nil {
-            defaults.set(0.333, forKey: Keys.blockRatio)
+            defaults.set(Self.clampedBlockRatio(0.333), forKey: Keys.blockRatio)
         }
         if defaults.object(forKey: Keys.showMenuBarIcon) == nil {
             defaults.set(true, forKey: Keys.showMenuBarIcon)
         }
-        self.blockRatio = defaults.double(forKey: Keys.blockRatio)
+        self.blockRatio = Self.clampedBlockRatio(defaults.double(forKey: Keys.blockRatio))
         self.launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         self.showMenuBarIcon = defaults.bool(forKey: Keys.showMenuBarIcon)
     }
 
-    func saveBlockRatio() {
-        UserDefaults.standard.set(blockRatio, forKey: Keys.blockRatio)
+    static func clampedBlockRatio(_ value: Double) -> Double {
+        min(max((value * 100).rounded() / 100, blockRatioRange.lowerBound), blockRatioRange.upperBound)
+    }
+
+    func setBlockRatio(_ value: Double) {
+        let clampedValue = Self.clampedBlockRatio(value)
+        guard blockRatio != clampedValue else { return }
+        blockRatio = clampedValue
+        defaults.set(clampedValue, forKey: Keys.blockRatio)
+    }
+
+    func setLaunchAtLogin(_ isEnabled: Bool) {
+        guard launchAtLogin != isEnabled else { return }
+        launchAtLogin = isEnabled
+        defaults.set(isEnabled, forKey: Keys.launchAtLogin)
+        applyLaunchAtLogin()
+    }
+
+    func setShowMenuBarIcon(_ isVisible: Bool) {
+        guard showMenuBarIcon != isVisible else { return }
+        showMenuBarIcon = isVisible
+        defaults.set(isVisible, forKey: Keys.showMenuBarIcon)
     }
 
     private func applyLaunchAtLogin() {

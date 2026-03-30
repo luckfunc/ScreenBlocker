@@ -15,7 +15,19 @@ struct ScreenBlockerApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let windowController = BlockerWindowController()
-    lazy var windowWatcher = WindowWatcher(blockerController: windowController)
+    lazy var windowWatcher: WindowWatcher = {
+        let watcher = WindowWatcher(blockerController: windowController)
+        watcher.onAdjustmentFeedback = { [weak self] feedback in
+            guard let self else { return }
+            switch feedback {
+            case .constrained:
+                self.windowController.showAdjustmentFeedback(.constrained)
+            case .failed:
+                self.windowController.showAdjustmentFeedback(.failed)
+            }
+        }
+        return watcher
+    }()
     lazy var settingsWindowController = SettingsWindowController(
         blockerController: windowController,
         watcher: windowWatcher
@@ -30,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !SettingsManager.shared.showMenuBarIcon {
-            SettingsManager.shared.showMenuBarIcon = true
+            SettingsManager.shared.setShowMenuBarIcon(true)
         }
 
         windowController.createAndShow()
@@ -54,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        SettingsManager.shared.showMenuBarIcon = true
+        SettingsManager.shared.setShowMenuBarIcon(true)
         return true
     }
 }

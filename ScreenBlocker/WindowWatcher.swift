@@ -3,6 +3,11 @@ import ApplicationServices
 
 private let axFullScreenAttribute = "AXFullScreen" as CFString
 
+enum WindowAdjustmentFeedback {
+    case constrained
+    case failed
+}
+
 final class WindowWatcher: ObservableObject {
     @Published var isEnabled = true
     @Published var hasAccessibilityPermission = false
@@ -19,6 +24,8 @@ final class WindowWatcher: ObservableObject {
     private var feedbackRequested = false
     private var suppressEventsUntil = Date.distantPast
     private var feedbackCooldownUntil = Date.distantPast
+
+    var onAdjustmentFeedback: ((WindowAdjustmentFeedback) -> Void)?
 
     init(blockerController: BlockerWindowController) {
         self.blockerController = blockerController
@@ -154,10 +161,10 @@ final class WindowWatcher: ObservableObject {
 
         if shouldReportFeedback {
             if didFailToConstrainWindow {
-                blockerController?.showAdjustmentFeedback(.failed)
+                onAdjustmentFeedback?(.failed)
                 feedbackCooldownUntil = Date().addingTimeInterval(1.0)
             } else if didConstrainWindow {
-                blockerController?.showAdjustmentFeedback(.constrained)
+                onAdjustmentFeedback?(.constrained)
                 feedbackCooldownUntil = Date().addingTimeInterval(1.0)
             }
         }
@@ -247,6 +254,8 @@ final class WindowWatcher: ObservableObject {
 
     func handleWindowEvent(_ element: AXUIElement, notification: CFString) {
         guard !paused, isEnabled else { return }
+        guard Self.shouldManageWindow(element) else { return }
+
         let now = Date()
         if now >= suppressEventsUntil && now >= feedbackCooldownUntil {
             feedbackRequested = notification == kAXWindowMovedNotification as CFString ||
@@ -298,6 +307,10 @@ final class WindowWatcher: ObservableObject {
         usableRect: NSRect,
         axCoordinateMaxY: CGFloat
     ) -> AdjustmentOutcome {
+        guard shouldManageWindow(window) else {
+            return .unchanged
+        }
+
         var posRef: CFTypeRef?
         var sizeRef: CFTypeRef?
 
@@ -348,6 +361,31 @@ final class WindowWatcher: ObservableObject {
         let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &newSize)!)
 
         return (positionResult == .success || sizeResult == .success) ? .adjusted : .failed
+    }
+
+    private static func shouldManageWindow(_ window: AXUIElement) -> Bool {
+        var roleRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &roleRef) == .success,
+              let role = roleRef as? String,
+              role == kAXWindowRole as String else {
+            return false
+        }
+
+        var subroleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleRef) == .success,
+           let subrole = subroleRef as? String,
+           subrole != kAXStandardWindowSubrole as String {
+            return false
+        }
+
+        var minimizedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef) == .success,
+           let minimized = minimizedRef as? NSNumber,
+           minimized.boolValue {
+            return false
+        }
+
+        return true
     }
 
     private static func isWindowFullScreen(_ window: AXUIElement) -> Bool {
