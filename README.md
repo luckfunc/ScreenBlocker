@@ -27,9 +27,7 @@
 
 ## 安装
 
-推荐从 GitHub Releases 下载 `.dmg` 安装包。
-
-如果当前仓库还没有发布页，也可以先使用 Actions 产出的 `.dmg` artifact，或者自行构建。
+从 [GitHub Releases](https://github.com/luckfunc/ScreenBlocker/releases) 下载 `.dmg` 安装包即可。
 
 ## 使用方式
 
@@ -43,9 +41,3 @@
 - 一些应用的特殊窗口、全屏模式或自绘窗口不一定完全受控
 - 多显示器布局非常特殊时，仍然可能需要继续微调窗口吸附逻辑
 - 当前安装包可能没有开发者签名，首次打开时 macOS 可能会提示确认
-
-## 开发说明
-
-构建、打包、CI 和发布相关说明见：
-
-[docs/development.md](/Users/xdd/Desktop/screen/ScreenBlocker/docs/development.md)
